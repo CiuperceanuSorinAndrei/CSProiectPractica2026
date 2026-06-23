@@ -12,7 +12,7 @@ from pyproj import CRS, Transformer
 from src.io.netcdf_reader import NetCdfReader
 from src.processing.dataset_cropper import DatasetCropper
 from src.services.cloud_data_service import CloudDataService
-from src.processing.storm_cell_detector import StormCellDetector
+from src.core.storm_cell_detector import StormCellDetector
 
 from config import PREDEFINED_LOCATIONS, DEFAULT_RADIUS_KM, DEFAULT_ANIMATION_SPEED, RAIN_VMAX, RAIN_THRESHOLD_MIN
 
