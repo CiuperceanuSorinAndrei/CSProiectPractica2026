@@ -16,6 +16,8 @@ FTP_BASE_FOLDER = "h60/h60_cur_mon_data"
 
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
+FTP_TIMEOUT = 30        # secunde
+FTP_MAX_RETRIES = 3
 
 # --- SETĂRI REGIUNE (LOCAȚII PREDEFINITE) ---
 PREDEFINED_LOCATIONS = {
