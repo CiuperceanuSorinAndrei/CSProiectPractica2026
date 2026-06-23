@@ -9,10 +9,10 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pyproj import CRS, Transformer
 
-from src.io.netcdf_reader import load_hsaf_data
-from src.processing.cropper import crop_dataset_to_bbox
-from src.io.ftp_client import fetch_hsaf_files
-from src.processing.morphology import extract_storm_cells
+from src.io.netcdf_reader import NetCdfReader
+from src.processing.dataset_cropper import DatasetCropper
+from src.services.cloud_data_service import CloudDataService
+from src.processing.storm_cell_detector import StormCellDetector
 
 from config import PREDEFINED_LOCATIONS, DEFAULT_RADIUS_KM, DEFAULT_ANIMATION_SPEED, RAIN_VMAX, RAIN_THRESHOLD_MIN
 
@@ -78,7 +78,8 @@ with st.sidebar:
                 st.info(f"Fisiere de verificat: {len(target_files)}")
                 
                 with st.spinner("Descarca secventa temporala..."):
-                    fetch_hsaf_files(target_files)
+                    service = CloudDataService(time_frames=[0, 15, 30, 45])
+                    service.download_files(target_files)
                 st.success("Descarcarea completă")
     
     st.markdown("---")
@@ -157,7 +158,7 @@ else:
     # Incarca date
     selected_file_name = nc_files[st.session_state.frame_idx]
     cale_completa = os.path.join(DATA_DIR, selected_file_name)
-    ds = load_hsaf_data(cale_completa)
+    ds = NetCdfReader(cale_completa).load_data()
     
     # Metrice principale
     st.markdown("---")
@@ -177,7 +178,7 @@ else:
     if ds is None:
         st.error(f"Eroare: Fisierul {selected_file_name} nu a putut fi citit")
     else:
-        ds_cropped = crop_dataset_to_bbox(ds, lon_min, lon_max, lat_min, lat_max)
+        ds_cropped = DatasetCropper(lon_min, lon_max, lat_min, lat_max).crop(ds)
         
         if ds_cropped is not None:
             # Extrage parametri proiectie
@@ -211,7 +212,7 @@ else:
             area_ploaie = np.sum(rain_rate > 0.1) * (111.0 ** 2) / (1000 ** 2)
             
             # Detectare celule furtuna
-            storm_cells = extract_storm_cells(rain_rate, threshold=RAIN_THRESHOLD_MIN, min_size=5)
+            storm_cells = StormCellDetector(threshold=RAIN_THRESHOLD_MIN, min_size=5).extract_cells(rain_rate)
 
             # Filtrare centroizi valizi in ROI
             valid_cells = []

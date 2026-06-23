@@ -14,13 +14,15 @@ class CloudDataService:
     def download_historical_period(self, year: int, month: int, day: int, start_hour: int, end_hour: int) -> list[xr.Dataset]:
         print(f"\n[BATCH] Pornire descărcări pentru data: {day:02d}/{month:02d}/{year}")
         target_files = self._get_target_files(year, month, day, start_hour, end_hour)
+        return self.download_files(target_files)
 
+    # Descarca o lista explicita de fisiere si le incarca in memorie
+    def download_files(self, target_files: list[str]) -> list[xr.Dataset]:
         self._ftp_client.connect()
         file_paths = self._ftp_client.fetch_files(target_files)
         self._ftp_client.disconnect()
 
-        datasets = self._load_data(file_paths)
-        return datasets
+        return self._load_data(file_paths)
 
     def _get_target_files(self, year: int, month: int, day: int, start_hour: int, end_hour: int) -> list[str]:
         file_paths = []

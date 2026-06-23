@@ -1,7 +1,7 @@
 import os
 import ftplib
 from config import FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER, DATA_RAW_DIR
-from processing.gz_decompressor import GZDecompressor
+from src.processing.gz_decompressor import GZDecompressor
 
 
 class FtpClient:
@@ -28,6 +28,7 @@ class FtpClient:
         print(f"Deconectare de la FTP {self._host}...")
         self._current_ftp.quit()
         self._current_ftp = None
+        print(f"Deconectare reusita")
 
     # Returneaza fisierul local unde este descarcat
     def fetch_file(self, file_name: str) -> str:

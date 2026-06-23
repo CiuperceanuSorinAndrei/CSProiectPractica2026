@@ -7,9 +7,9 @@ class NetCdfReader:
     def __init__(self, file_path: str | None = None):
         self.set_file_path(file_path)
 
-    def set_file_path(self, file_path: str):
-        if not os.path.exists(self._file_path):
-            print(f"Eroare: Fisierul nu exista la: {self._file_path}")
+    def set_file_path(self, file_path: str | None = None):
+        if file_path is not None and not os.path.exists(file_path):
+            print(f"Eroare: Fisierul nu exista la: {file_path}")
             return
         self._file_path = file_path
 
