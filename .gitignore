@@ -1,0 +1,14 @@
+# Medii virtuale
+.venv/
+env/
+__pycache__/
+
+# Date
+data/raw/
+
+# Fișiere de sistem
+.DS_Store
+*.log
+
+# Date de logare
+.env
