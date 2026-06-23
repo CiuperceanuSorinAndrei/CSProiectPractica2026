@@ -9,7 +9,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pyproj import CRS, Transformer
 
-from src.io.reader import load_hsaf_data
+from src.io.netcdf_reader import load_hsaf_data
 from src.processing.cropper import crop_dataset_to_bbox
 from src.io.ftp_client import fetch_hsaf_files
 from src.processing.morphology import extract_storm_cells
