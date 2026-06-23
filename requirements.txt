@@ -7,4 +7,13 @@ shapely>=2.0.0
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
 cartopy>=0.20.0
+pyproj>=3.4.0
 python-dotenv>=1.0.0
+
+# Tracking / kinematics (cinematici/tracking integration)
+filterpy>=1.4.5
+opencv-python-headless>=4.8.0
+
+# Dash UI
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
