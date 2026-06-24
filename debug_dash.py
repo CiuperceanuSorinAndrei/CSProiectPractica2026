@@ -6,14 +6,15 @@ import os
 sys.path.append(os.path.abspath("."))
 
 from config import PREDEFINED_LOCATIONS
-from app_dash import update_dashboard
+from src.dashboard import DEFAULT_TIME_RANGE
+from app_dash import dashboard
 
-# update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, reset_clicks, run_mode)
+# _update_dashboard(frame_idx, loc, m_lat, m_lon, map_zoom, radius_km, run_mode, time_range)
 loc = list(PREDEFINED_LOCATIONS.keys())[0]
 
 print("Starting debug test...")
 try:
-    res = update_dashboard(0, loc, 44.33, 23.79, 500, 30, None, "historic")
+    res = dashboard._update_dashboard(0, loc, 44.33, 23.79, 500, 30, "historic", DEFAULT_TIME_RANGE)
     print("Success! Returned", len(res), "items")
     print("Image src starts with:", res[0][:50])
 except Exception:

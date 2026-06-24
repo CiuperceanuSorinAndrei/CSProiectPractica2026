@@ -2,39 +2,40 @@ import os
 import datetime
 from datetime import timedelta
 
-import xarray as xr
-
 from config import (
     FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER, DATA_RAW_DIR,
     FTP_TIMEOUT, FTP_MAX_RETRIES,
 )
-from src.io.netcdf_reader import NetCdfReader
 from src.io.ftp_client import FtpClient
 
 
 class CloudDataService:
-    _time_frames: list[int] = None
+    """Serviciu de date H-SAF: descarcare istorica (interval) si LIVE (ultimul cadru).
+
+    Cadrele H60 sunt la fiecare 15 minute. FtpClient sare automat peste fisierele
+    deja prezente local, deci re-descarcarea unui interval este ieftina.
+    """
+
     _ftp_client: FtpClient = FtpClient(
         FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER,
         timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
     )
 
-    def __init__(self, time_frames: list[int]):
-        self._time_frames = time_frames
+    # Descarca toate cadrele (la 15 min) din intervalul [start_dt, end_dt].
+    # Returneaza numarul de fisiere noi descarcate (cele deja locale sunt sarite).
+    def download_range(self, start_dt: datetime.datetime, end_dt: datetime.datetime) -> int:
+        targets = self._target_filenames(start_dt, end_dt)
+        missing = [f for f in targets if not os.path.exists(os.path.join(DATA_RAW_DIR, f[:-3]))]
+        if missing:
+            self.download_files(missing)
+        return len(missing)
 
-    # Descarca toate cadrele dintr-o perioada (o singura zi) si le incarca in memorie
-    def download_historical_period(self, year: int, month: int, day: int, start_hour: int, end_hour: int) -> list[xr.Dataset]:
-        print(f"\n[BATCH] Pornire descarcari pentru data: {day:02d}/{month:02d}/{year}")
-        target_files = self._get_target_files(year, month, day, start_hour, end_hour)
-        return self.download_files(target_files)
-
-    # Descarca o lista explicita de fisiere si le incarca in memorie
-    def download_files(self, target_files: list[str]) -> list[xr.Dataset]:
+    # Descarca o lista explicita de fisiere; returneaza caile locale (.nc)
+    def download_files(self, target_files: list[str]) -> list[str]:
         self._ftp_client.connect()
-        file_paths = self._ftp_client.fetch_files(target_files)
+        paths = self._ftp_client.fetch_files(target_files)
         self._ftp_client.disconnect()
-
-        return self._load_data(file_paths)
+        return paths
 
     # Mod LIVE: gaseste si descarca cel mai recent cadru H-SAF disponibil pe FTP, plus
     # ultimele cateva cadre istorice (necesare pentru Optical Flow). Returneaza calea locala.
@@ -77,15 +78,15 @@ class CloudDataService:
             if not os.path.exists(prev_final) and self._ftp_client.file_size(prev_filename):
                 self._ftp_client.fetch_file(prev_filename)
 
-    def _get_target_files(self, year: int, month: int, day: int, start_hour: int, end_hour: int) -> list[str]:
-        file_paths = []
-        for hour in range(start_hour, end_hour + 1):
-            for minute in self._time_frames:
-                if hour == end_hour and minute > 0:
-                    break
-                file_paths.append(self._h60_filename_parts(year, month, day, hour, minute))
-
-        return file_paths
+    # Numele cadrelor H60 (la 15 min) care acopera intervalul [start_dt, end_dt]
+    @staticmethod
+    def _target_filenames(start_dt: datetime.datetime, end_dt: datetime.datetime) -> list[str]:
+        files = []
+        current = start_dt
+        while current <= end_dt:
+            files.append(CloudDataService._h60_filename(current))
+            current += timedelta(minutes=15)
+        return files
 
     @staticmethod
     def _h60_filename(dt: datetime.datetime) -> str:
@@ -95,14 +96,3 @@ class CloudDataService:
     def _h60_filename_parts(year: int, month: int, day: int, hour: int, minute: int) -> str:
         # Formatul standard EUMETSAT H60: h60_YYYYMMDD_HHMM_fdk.nc.gz
         return f"h60_{year}{month:02d}{day:02d}_{hour:02d}{minute:02d}_fdk.nc.gz"
-
-    @staticmethod
-    def _load_data(file_paths: list[str]) -> list[xr.Dataset]:
-        datasets = []
-        netcdf_reader = NetCdfReader()
-
-        for file_path in file_paths:
-            netcdf_reader.set_file_path(file_path)
-            datasets.append(netcdf_reader.load_data())
-
-        return datasets

@@ -1,29 +1,95 @@
-/* Stilizare pentru textul din slidere */
-.rc-slider-mark-text {
-    color: #f8f9fa !important;
-    font-weight: bold;
+/* =============================================================================
+   TEMA DASHBOARD — schimba culorile dintr-un singur loc.
+   Valorile implicite reproduc tema DARKLY curenta (nimic nu se schimba vizual).
+   Editeaza variabilele din :root de mai jos pentru a re-colora tot dashboard-ul.
+   NB: culorile hartii (matplotlib/cartopy) sunt randate in Python si NU sunt
+   controlate de aici — vezi src/ui_helpers/plotting.py.
+   ============================================================================= */
+:root {
+    /* ---- Fundaluri ---- */
+    --c-bg-rgb: 48, 48, 48;          /* panouri (bg-dark) = #303030 */
+    --c-bg: rgb(var(--c-bg-rgb));
+    --c-page-bg: #222222;            /* fundalul paginii (body) */
+    --c-surface: #343a40;            /* inputs, tooltip slider */
+    --c-calendar-bg: #222222;        /* popup calendar */
+    --c-calendar-cell: #333333;      /* zilele din calendar */
+    --c-calendar-hover: #555555;
+    --c-calendar-line: #444444;
+
+    /* ---- Text ---- */
+    --c-text-rgb: 173, 181, 189;     /* text-light = #adb5bd */
+    --c-text: rgb(var(--c-text-rgb));
+    --c-text-strong: #f8f9fa;        /* text accentuat (inputs, calendar) */
+    --c-text-muted: rgba(222, 226, 230, 0.75);
+    --c-body-text: #dee2e6;          /* text implicit pagina */
+
+    /* ---- Linii / borduri ---- */
+    --c-border: #6c757d;             /* borduri inputs/carduri, hr, linii */
+    --c-scroll-thumb: #495057;
+
+    /* ---- Accente (semantic) ---- */
+    --c-info-rgb: 52, 152, 219;      /* info (titlu, carduri info) = #3498db */
+    --c-success-rgb: 0, 188, 140;    /* success = #00bc8c */
+    --c-danger-rgb: 231, 76, 60;     /* danger = #e74c3c */
+    --c-primary-rgb: 55, 90, 127;    /* primary = #375a7f */
+    --c-spinner: #0dcaf0;            /* spinner download (prop in Python) */
+    --c-cal-selected: #0d6efd;       /* zi selectata in calendar */
+    --c-cal-selected-span: #0a58ca;  /* interval selectat in calendar */
+
+    /* ---- Mapare catre Bootstrap (utilitati bg-*, text-*, border-*) ---- */
+    --bs-dark-rgb: var(--c-bg-rgb);
+    --bs-light-rgb: var(--c-text-rgb);
+    --bs-info-rgb: var(--c-info-rgb);
+    --bs-success-rgb: var(--c-success-rgb);
+    --bs-danger-rgb: var(--c-danger-rgb);
+    --bs-primary-rgb: var(--c-primary-rgb);
+    --bs-body-bg: var(--c-page-bg);
+    --bs-body-color: var(--c-body-text);
+    --bs-border-color: var(--c-border);
+    --bs-border-color-translucent: rgba(108, 117, 125, 0.6);
+    --bs-secondary-color: var(--c-text-muted);   /* text-muted */
 }
 
-/* Stilizare pentru campurile de data (DatePickerRange) pe Dark Mode */
-.DateInput_input, .DateInput_input_1 {
-    background-color: #343a40 !important;
-    color: #f8f9fa !important;
-    border-color: #6c757d !important;
-}
-.DateRangePickerInput, .DateRangePickerInput_1 {
-    background-color: #343a40 !important;
-    border-color: #6c757d !important;
-}
-.DateRangePickerInput_arrow, .DateRangePickerInput_arrow_1 {
-    background-color: #343a40 !important;
-}
-.DateRangePickerInput_arrow_svg {
-    fill: #f8f9fa !important;
-}
 
-/* Stil pentru tooltip-ul slider-ului */
-.rc-slider-tooltip-inner {
-    background-color: #343a40 !important;
-    color: #f8f9fa !important;
-    border: 1px solid #6c757d !important;
-}
+/* =============================================================================
+   Reguli pentru componentele native Dash (folosesc variabilele de mai sus)
+   ============================================================================= */
+
+/* Ascundem complet orice input asociat slider-ului (feature nativ din Dash) */
+.dash-input-container, .dash-range-slider-input, .dash-range-slider-max-input { display: none !important; }
+
+/* Ascundem complet marcajele numerice de sub slider */
+.dash-slider-mark, .rc-slider-mark, .rc-slider-mark-text { display: none !important; }
+
+.rc-slider-tooltip-inner { background-color: var(--c-surface) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; box-shadow: none !important; }
+
+/* DatePickerRange Text Inputs */
+.DateInput, .DateInput_1 { background-color: var(--c-surface) !important; }
+.DateInput_input, .DateInput_input_1, input.DateInput_input { background-color: var(--c-surface) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+.DateRangePickerInput, .DateRangePickerInput_1 { background-color: var(--c-surface) !important; border: 1px solid var(--c-border) !important; border-radius: 4px; overflow: hidden; }
+.DateRangePickerInput_arrow, .DateRangePickerInput_arrow_1 { background-color: var(--c-surface) !important; }
+.DateRangePickerInput_arrow_svg { fill: var(--c-text-strong) !important; }
+
+/* DatePickerRange Popup Calendar */
+.DayPicker, .DayPicker_1 { background-color: var(--c-calendar-bg) !important; }
+.CalendarMonth, .CalendarMonth_1, .CalendarMonthGrid, .CalendarMonthGrid_1 { background-color: var(--c-calendar-bg) !important; }
+.CalendarMonth_caption, .CalendarMonth_caption_1 { color: var(--c-text-strong) !important; }
+.DayPickerNavigation_button__default, .DayPickerNavigation_button__default_1 { background-color: var(--c-calendar-cell) !important; }
+.DayPickerNavigation_svg__default { fill: var(--c-text-strong) !important; }
+.DayPickerKeyboardShortcuts_buttonReset { display: none !important; }
+.CalendarDay__default, .CalendarDay__default_1 { background-color: var(--c-calendar-cell) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-calendar-line) !important; }
+.CalendarDay__default:hover { background-color: var(--c-calendar-hover) !important; }
+.CalendarDay__selected, .CalendarDay__selected_1 { background-color: var(--c-cal-selected) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-cal-selected) !important; }
+.CalendarDay__selected_span, .CalendarDay__selected_span_1 { background-color: var(--c-cal-selected-span) !important; color: var(--c-text-strong) !important; }
+.CalendarDay__hovered_span, .CalendarDay__hovered_span_1 { background-color: var(--c-calendar-line) !important; color: var(--c-text-strong) !important; }
+
+/* Sidebar fix: ramane lipit de marginea ferestrei la scroll, cu scroll intern propriu */
+.app-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.app-sidebar::-webkit-scrollbar { width: 8px; }
+.app-sidebar::-webkit-scrollbar-track { background: var(--c-page-bg); }
+.app-sidebar::-webkit-scrollbar-thumb { background: var(--c-scroll-thumb); border-radius: 4px; }
+
+/* Borduri si linii mai vizibile pe fundalul intunecat */
+.border-secondary { border-color: var(--c-border) !important; }
+.table-dark { --bs-table-border-color: var(--c-border); }
+hr { border-color: var(--c-border) !important; opacity: 0.5 !important; }
