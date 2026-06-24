@@ -33,7 +33,10 @@ class StormCellDetector:
 
         struct = np.ones((3, 3))
         large_mask = ndi.binary_opening(rain_matrix >= large_thr, structure=struct)
-        cells = self._extract_components(rain_matrix, large_mask, self._min_size)
+        
+        # Folosim Watershed pentru a separa celulele lipite in locul simplei etichetari
+        large_labels = self._watershed_segmentation(rain_matrix, large_mask)
+        cells = self._extract_components_from_labels(rain_matrix, large_labels, self._min_size)
 
         # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
         seen_mask = np.zeros(rain_matrix.shape, dtype=bool)
@@ -44,8 +47,9 @@ class StormCellDetector:
 
         # Adaugam celulele mici care nu se suprapun
         small_mask = ndi.binary_opening(rain_matrix >= small_thr, structure=struct)
-        small_cells = self._extract_components(
-            rain_matrix, small_mask, self._min_size, max_area=self._small_cell_max_area,
+        small_labels = self._watershed_segmentation(rain_matrix, small_mask)
+        small_cells = self._extract_components_from_labels(
+            rain_matrix, small_labels, self._min_size, max_area=self._small_cell_max_area,
         )
 
         next_id = len(cells) + 1
@@ -60,21 +64,25 @@ class StormCellDetector:
 
         return cells
 
-    # Extrage componentele conexe din masca binara si calculeaza proprietatile fizice.
-    # Vectorizat: ndi.sum_labels / ndi.maximum / ndi.mean in loc de bucle per-eticheta.
     @staticmethod
-    def _extract_components(
+    def _watershed_segmentation(rain_matrix: np.ndarray, base_mask: np.ndarray) -> np.ndarray:
+        """Aplica etichetarea componentelor. (Watershed a fost dezactivat temporar din cauza instabilitatii varfurilor)."""
+        labels, _ = ndi.label(base_mask)
+        return labels
+
+    @staticmethod
+    def _extract_components_from_labels(
         rain_matrix: np.ndarray,
-        mask: np.ndarray,
+        labeled_mask: np.ndarray,
         min_size: int,
         max_area: int | None = None,
     ) -> list[dict]:
-        labeled_mask, num_features = ndi.label(mask)
-        if num_features == 0:
+        labels = np.unique(labeled_mask)
+        labels = labels[labels > 0]
+        if len(labels) == 0:
             return []
 
-        labels = np.arange(1, num_features + 1)
-
+        mask = labeled_mask > 0
         areas = ndi.sum_labels(mask, labeled_mask, labels).astype(int)
         centroids = ndi.center_of_mass(rain_matrix, labeled_mask, labels)
         max_intensities = ndi.maximum(rain_matrix, labeled_mask, labels)

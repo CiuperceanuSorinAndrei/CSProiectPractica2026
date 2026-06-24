@@ -162,10 +162,11 @@ class Orchestrator:
                     vx = cell.get("v_x", 0.0)
                     vy = cell.get("v_y", 0.0)
 
-                    # Reconstruim masca curenta
-                    c_mask = np.zeros(rain_rate.shape, dtype=bool)
-                    for cy, cx in cell["coords"]:
-                        c_mask[int(cy), int(cx)] = True
+                    coords = np.asarray(cell["coords"])
+                    if len(coords) == 0:
+                        continue
+                        
+                    grid_h, grid_w = rain_rate.shape
 
                     # Daca sta pe loc complet (viteza aproape 0), previne bucla artificiala pt 3 ore
                     if abs(vx) < 0.1 and abs(vy) < 0.1:
@@ -174,18 +175,30 @@ class Orchestrator:
                         frames_to_sim = MAX_FORECAST_FRAMES
 
                     for step in range(1, frames_to_sim + 1):
-                        # translate_mask(mask, shift_y, shift_x): vy pe axa y (randuri), vx pe axa x (coloane)
-                        future_mask = StormTracker.translate_mask(c_mask, step * vy, step * vx)
-                        # astype(bool) evita fancy-indexing pe pixel_area_km2 (masca e uint8)
-                        overlap_mask = future_mask.astype(bool) & roi_mask
-                        num_pixels_overlap = np.sum(overlap_mask)
+                        shifted_y = np.rint(coords[:, 0] + step * vy).astype(int)
+                        shifted_x = np.rint(coords[:, 1] + step * vx).astype(int)
+
+                        # Filtram coordonatele care ies in afara grilei
+                        valid = (shifted_y >= 0) & (shifted_y < grid_h) & (shifted_x >= 0) & (shifted_x < grid_w)
+                        if not np.any(valid):
+                            if step > 1 and total_predicted_volume_m3 > 0:
+                                break
+                            continue
+                            
+                        val_y = shifted_y[valid]
+                        val_x = shifted_x[valid]
+
+                        # Verificam suprapunerea directa cu bazinul
+                        in_roi = roi_mask[val_y, val_x]
+                        num_pixels_overlap = np.sum(in_roi)
 
                         if num_pixels_overlap > 0:
-                            area_overlap_km2 = np.sum(pixel_area_km2[overlap_mask])
+                            # Insumam strict aria pixelilor mutati care au cazut in ROI
+                            area_overlap_km2 = np.sum(pixel_area_km2[val_y[in_roi], val_x[in_roi]])
                             vol_step_m3 = float(area_overlap_km2 * mean_int * 250.0)
                             total_predicted_volume_m3 += vol_step_m3
                         elif step > 1 and total_predicted_volume_m3 > 0:
-                            # Am iesit deja din ROI, n-are rost sa simulam restul cadrelor
+                            # Am iesit complet din ROI, n-are rost sa simulam restul pasilor din viitor
                             break
 
             # Construim noua masca globala prezisa pentru T+1
