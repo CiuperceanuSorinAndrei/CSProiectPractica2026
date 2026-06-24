@@ -35,11 +35,12 @@ class StormCellDetector:
         large_mask = ndi.binary_opening(rain_matrix >= large_thr, structure=struct)
         cells = self._extract_components(rain_matrix, large_mask, self._min_size)
 
-        # Construim set-ul de pixeli deja acoperiti de celulele mari
-        seen: set[tuple[int, int]] = set()
+        # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
+        seen_mask = np.zeros(rain_matrix.shape, dtype=bool)
         for cell in cells:
-            for coord in cell["coords"]:
-                seen.add((int(coord[0]), int(coord[1])))
+            coords = np.asarray(cell["coords"])
+            if len(coords) > 0:
+                seen_mask[coords[:, 0], coords[:, 1]] = True
 
         # Adaugam celulele mici care nu se suprapun
         small_mask = ndi.binary_opening(rain_matrix >= small_thr, structure=struct)
@@ -49,7 +50,9 @@ class StormCellDetector:
 
         next_id = len(cells) + 1
         for cell in small_cells:
-            if any((int(c[0]), int(c[1])) in seen for c in cell["coords"]):
+            coords = np.asarray(cell["coords"])
+            # Daca exista ORICE pixel care e deja in seen_mask, ignoram celula
+            if len(coords) > 0 and np.any(seen_mask[coords[:, 0], coords[:, 1]]):
                 continue
             cell["id"] = next_id
             next_id += 1

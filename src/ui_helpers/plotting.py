@@ -7,6 +7,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.geodesic as cgeo
 import shapely.geometry as sgeom
+import matplotlib.patheffects as patheffects
 
 
 class StormMapPlotter:
@@ -33,18 +34,48 @@ class StormMapPlotter:
             (fig, ax, im) - figura, axa cartopy si imaginea pcolormesh
         """
         lon_min, lon_max, lat_min, lat_max = extent
+        import matplotlib.colors as mcolors
+        
+        # Fundal intunecat (Cinematic Dark Mode)
         fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={"projection": ccrs.PlateCarree()})
+        fig.patch.set_facecolor('#111315') # Culoare margini figura
+        ax.set_facecolor('#111315')
+        
         ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-        ax.add_feature(cfeature.BORDERS, linestyle="-", linewidth=1.5, edgecolor="black")
-        ax.add_feature(cfeature.COASTLINE, linestyle="-", linewidth=1)
-        ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.3)
+        
+        # Diferentiere pamant si apa folosind rezolutia 50m (care se descarca foarte rapid)
+        land_50m = cfeature.NaturalEarthFeature('physical', 'land', '50m', edgecolor='none', facecolor='#1a1c20')
+        ocean_50m = cfeature.NaturalEarthFeature('physical', 'ocean', '50m', edgecolor='none', facecolor='#111315')
+        ax.add_feature(land_50m, zorder=0)
+        ax.add_feature(ocean_50m, zorder=0)
+        ax.add_feature(cfeature.BORDERS, linestyle="-", linewidth=1.0, edgecolor="#343a40", zorder=1)
+        ax.add_feature(cfeature.COASTLINE, linestyle="-", linewidth=1.2, edgecolor="#495057", zorder=1)
+        
+        gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="#495057", alpha=0.5, zorder=1)
+        gl.xlabel_style = {'color': '#adb5bd', 'size': 9}
+        gl.ylabel_style = {'color': '#adb5bd', 'size': 9}
 
-        im = ax.pcolormesh(
+        # Paleta de culori specifica pentru radar meteo
+        radar_colors = [
+            "#00ECEC", "#01A0F6", "#0000F6",  # Precipitatii usoare (Bleu -> Albastru)
+            "#00FF00", "#00C800", "#009000",  # Moderate (Verde deschis -> Verde inchis)
+            "#FFFF00", "#E7C000",             # Moderate spre grele (Galben -> Portocaliu)
+            "#FF9000", "#FF0000", "#D60000",  # Grele (Portocaliu inchis -> Rosu)
+            "#C00000", "#FF00FF", "#9955C9"   # Extreme (Rosu inchis -> Magenta / Violet)
+        ]
+        radar_cmap = mcolors.LinearSegmentedColormap.from_list("Radar", radar_colors)
+
+        levels = np.linspace(vmin, vmax, 20)
+        im = ax.contourf(
             lon_grid, lat_grid, rain_rate_masked,
+            levels=levels,
             transform=ccrs.PlateCarree(),
-            cmap="Blues", vmin=vmin, vmax=vmax, shading="auto", alpha=0.85,
+            cmap=radar_cmap, extend="max", alpha=0.85, zorder=2
         )
-        plt.colorbar(im, ax=ax, label="Intensitate ploaie (mm/h)", orientation="vertical", pad=0.10, shrink=0.8)
+        cb = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.10, shrink=0.8)
+        cb.set_label("Intensitate ploaie (mm/h)", color="#adb5bd")
+        cb.ax.yaxis.set_tick_params(color="#adb5bd")
+        plt.setp(plt.getp(cb.ax.axes, 'yticklabels'), color="#adb5bd")
 
         if roi_center is not None and roi_radius_km is not None:
             c_lat, c_lon = roi_center
@@ -59,7 +90,7 @@ class StormMapPlotter:
             )
 
         if title:
-            ax.set_title(title, fontsize=11, fontweight="bold")
+            ax.set_title(title, fontsize=11, fontweight="bold", color="#f8f9fa")
 
         return fig, ax, im
 
@@ -72,12 +103,13 @@ class StormMapPlotter:
             cell_lon = cell["geo_lon"]
             cell_lat = cell["geo_lat"]
 
-            # Marker centroid
-            ax.plot(cell_lon, cell_lat, "kx", markersize=8, mew=2.5, transform=proj, zorder=4)
+            # Marker centroid (Punct alb cu contur negru)
+            ax.plot(cell_lon, cell_lat, "o", color="white", markeredgecolor="black", markeredgewidth=1.5, markersize=5, transform=proj, zorder=4)
             ax.text(
                 cell_lon + 0.02, cell_lat + 0.02,
                 f"#{cell['cell_id'][:4]}",
-                color="black", fontsize=8, fontweight="bold", transform=proj,
+                color="white", fontsize=8, fontweight="bold", transform=proj,
+                path_effects=[patheffects.withStroke(linewidth=1.5, foreground="black")]
             )
 
             # Contur prezis din masca
@@ -110,11 +142,12 @@ class StormMapPlotter:
             if len(contour_lon) >= 3:
                 contour_lon.append(contour_lon[0])
                 contour_lat.append(contour_lat[0])
-                ax.plot(
+                line = ax.plot(
                     contour_lon, contour_lat,
-                    color="#00FF00", linestyle="--", linewidth=1.8,
+                    color="white", linestyle="-", linewidth=1.5,
                     transform=proj, zorder=3,
                 )
+                line[0].set_path_effects([patheffects.withStroke(linewidth=3.5, foreground="black"), patheffects.Normal()])
 
     @staticmethod
     def _draw_velocity_arrow(ax, cell: dict, lon_grid: np.ndarray, lat_grid: np.ndarray, proj) -> None:
@@ -131,7 +164,8 @@ class StormMapPlotter:
         if abs(dx) > 1e-6 or abs(dy) > 1e-6:
             ax.arrow(
                 cell_lon, cell_lat, dx, dy,
-                head_width=0.03, head_length=0.03,
-                fc="magenta", ec="magenta",
-                transform=proj, zorder=5, linewidth=1.5,
+                width=0.03,
+                head_width=0.1, head_length=0.1,
+                fc="white", ec="black",
+                transform=proj, zorder=5, linewidth=1.0,
             )

@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 from filterpy.kalman import KalmanFilter
 
+_mgrid_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+
 
 class StormTracker:
     _max_dist_pixels: int = None
@@ -262,12 +264,16 @@ class StormTracker:
     @staticmethod
     def build_cell_mask(cell: dict, rain_matrix: np.ndarray) -> np.ndarray:
         """Construieste masca binara a unei celule pe dimensiunea matricei de ploaie."""
+        if "_cached_mask" in cell:
+            return cell["_cached_mask"]
+
         mask = np.zeros_like(rain_matrix, dtype=np.uint8)
         coords = cell.get("coords")
 
         if coords is not None and len(coords) > 0:
             coords = np.asarray(coords)
             mask[coords[:, 0], coords[:, 1]] = 1
+            cell["_cached_mask"] = mask
             return mask
 
         # Fallback: reconstruim masca din centroid + arie
@@ -282,6 +288,7 @@ class StormTracker:
 
         local = rain_matrix[y0:y1, x0:x1] >= 0.5
         mask[y0:y1, x0:x1][local] = 1
+        cell["_cached_mask"] = mask
         return mask
 
     @staticmethod
@@ -340,11 +347,20 @@ class StormTracker:
         prev_img = np.clip(previous_rain * 10, 0, 255).astype(np.uint8)
         curr_img = np.clip(current_rain * 10, 0, 255).astype(np.uint8)
 
-        return cv2.calcOpticalFlowFarneback(
-            prev_img, curr_img, None,
+        # Optimizare: reducem la jumatate rezolutia pt viteza Farneback (de 4x mai putini pixeli)
+        h, w = prev_img.shape
+        prev_small = cv2.resize(prev_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+        curr_small = cv2.resize(curr_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+
+        flow_small = cv2.calcOpticalFlowFarneback(
+            prev_small, curr_small, None,
             pyr_scale=0.5, levels=3, winsize=15,
             iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
         )
+
+        # Scalam vectorii de flow inapoi la rezolutia originala si le dublam magnitudinea
+        flow_full = cv2.resize(flow_small, (w, h), interpolation=cv2.INTER_LINEAR)
+        return flow_full * 2.0
 
     @staticmethod
     def _mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
@@ -365,21 +381,40 @@ class StormTracker:
         shift_y: float, shift_x: float,
         scale_factor: float,
     ) -> np.ndarray | None:
-        """Prezice forma viitoare a mastii prin scalare + translatie afina."""
+        """Prezice forma viitoare a mastii prin Extrapolare Semi-Lagrangiana + scalare."""
         if mask is None or np.sum(mask) == 0:
             return mask
 
         h, w = mask.shape
-        matrix = np.array([
-            [scale_factor, 0.0, (1.0 - scale_factor) * center_x + shift_x],
-            [0.0, scale_factor, (1.0 - scale_factor) * center_y + shift_y],
-        ], dtype=np.float32)
-
-        warped = cv2.warpAffine(
-            mask.astype(np.uint8), matrix, (w, h),
-            flags=cv2.INTER_NEAREST, borderValue=0,
+        
+        # 1. Cream grila de coordonate (cu cache)
+        if (h, w) not in _mgrid_cache:
+            _mgrid_cache[(h, w)] = np.mgrid[0:h, 0:w].astype(np.float32)
+        y_coords, x_coords = _mgrid_cache[(h, w)]
+        
+        # 2. Semi-Lagrangian: tragem pixelii din urma vectorului
+        map_x = (x_coords - shift_x).astype(np.float32)
+        map_y = (y_coords - shift_y).astype(np.float32)
+        
+        warped = cv2.remap(
+            mask.astype(np.float32), map_x, map_y, 
+            interpolation=cv2.INTER_LINEAR, 
+            borderMode=cv2.BORDER_CONSTANT, borderValue=0
         )
-        return (warped > 0).astype(np.uint8)
+        
+        # 3. Aplicam transformarea afina doar pentru scaling (Growth/Decay)
+        if abs(scale_factor - 1.0) > 1e-4:
+            matrix = np.array([
+                [scale_factor, 0.0, (1.0 - scale_factor) * center_x],
+                [0.0, scale_factor, (1.0 - scale_factor) * center_y],
+            ], dtype=np.float32)
+            
+            warped = cv2.warpAffine(
+                warped, matrix, (w, h),
+                flags=cv2.INTER_LINEAR, borderValue=0,
+            )
+            
+        return (warped > 0.3).astype(np.uint8)
 
     @staticmethod
     def _calculate_distance(y1: float, x1: float, y2: float, x2: float) -> float:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import threading
 
 import numpy as np
 
@@ -47,12 +48,14 @@ class Orchestrator:
     def __init__(self) -> None:
         self._detector = StormCellDetector(threshold=RAIN_THRESHOLD_MIN, min_size=2)
         self._tracker = StormTracker(max_dist_pixels=MAX_TRACKING_DISTANCE_PX)
+        self._lock = threading.Lock()
         self._previous_global_predicted_mask: Any = None
 
     def reset_tracking(self) -> None:
         """Goleste complet starea de tracking (Kalman + masca globala prezisa)."""
-        self._tracker.reset()
-        self._previous_global_predicted_mask = None
+        with self._lock:
+            self._tracker.reset()
+            self._previous_global_predicted_mask = None
 
     def process_frame(
         self,
@@ -61,13 +64,13 @@ class Orchestrator:
         lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float,
     ) -> FrameResult | None:
-        """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking.
-
-        Returns:
-            FrameResult cu toate datele necesare pentru vizualizare, sau None daca esueaza.
-        """
+        """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking."""
+        if not self._lock.acquire(blocking=False):
+            return None
+            
         ds = NetCdfReader(file_path).load_data()
         if ds is None:
+            self._lock.release()
             return None
 
         try:
@@ -83,11 +86,18 @@ class Orchestrator:
 
             # Pregatire matrice precipitatii
             rain_rate = ds_cropped["rr"].values.copy()
-            rain_rate = np.nan_to_num(rain_rate, nan=0.0)
             rain_rate[rain_rate < 0] = 0.0
-            rain_rate_masked = np.ma.masked_where(rain_rate < 0.1, rain_rate)
+            rain_rate_masked = np.ma.masked_where(rain_rate < RAIN_THRESHOLD_MIN, rain_rate)
 
-            max_rain = float(np.max(rain_rate))
+            # Calculam distanta pana la centru pentru a defini aria de interes (ROI) imediat
+            dist_grid = self._haversine_dist_grid(center_lat, center_lon, lat_grid, lon_grid)
+            roi_mask = dist_grid <= radius_km
+
+            # Rata maxima se afiseaza doar pentru aria de interes, nu global
+            if np.any(roi_mask):
+                max_rain = float(np.max(rain_rate[roi_mask]))
+            else:
+                max_rain = 0.0
 
             # Detectie celule convective
             raw_storm_cells = self._detector.extract_cells(rain_rate)
@@ -113,15 +123,13 @@ class Orchestrator:
             # intern resetarea la schimbarea rezolutiei grilei (zoom in/out pe harta).
             tracked_cells = self._tracker.track(filtered_cells, rain_rate)
 
-            # Calcul Volum Precipitatii in ROI circular (Raza de la centru)
-            dist_grid = self._haversine_dist_grid(center_lat, center_lon, lat_grid, lon_grid)
-            roi_mask = dist_grid <= radius_km
+            # (roi_mask a fost deja calculat mai sus)
 
             # --- CALCUL METRICI GLOBALE (doar in ROI) ---
             global_csi, global_far, global_pod = None, None, None
             prev_global = self._previous_global_predicted_mask
             if prev_global is not None and prev_global.shape == rain_rate.shape:
-                obs_mask = (rain_rate >= 0.1) & roi_mask
+                obs_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
                 pred_mask = prev_global & roi_mask
 
                 # Inregistram metrici doar daca exista activitate in ROI (ploaie observata sau prezisa)
@@ -134,7 +142,7 @@ class Orchestrator:
             pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
 
             # 1 mm/h ploaie = 0.25 mm/15min = 250 m^3/km^2 acumulati in 15 minute
-            valid_rain_mask = (rain_rate >= 0.1) & roi_mask
+            valid_rain_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
             roi_volume_m3 = float(np.sum(rain_rate[valid_rain_mask] * pixel_area_km2[valid_rain_mask] * 250.0))
 
             # Calcul Volum Prezis Acumulat in ROI pentru urmatoarele N cadre (Max 3 ore = 12 cadre)
@@ -218,6 +226,7 @@ class Orchestrator:
                 global_pod=global_pod,
             )
         finally:
+            self._lock.release()
             ds.close()
 
     # Distanta Haversine (km) intre un punct fix si un grid de puncte
