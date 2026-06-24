@@ -38,5 +38,8 @@ RAIN_THRESHOLD_MIN = 0.5    # mm/h minim pentru a detecta formarea unei celule
 RAIN_THRESHOLD_SEVERE = 5.0 # mm/h pentru vizualizarea ploii severe
 RAIN_VMAX = 12.0            # Limita maximă pe scala de culori a hărții
 
+# --- SETĂRI TRACKING (CINEMATICĂ) ---
+MAX_TRACKING_DISTANCE_PX = 18  # Distanța maximă (pixeli) pentru matching între cadre
+
 # --- SETĂRI STREAMLIT ---
 DEFAULT_ANIMATION_SPEED = 0.4
