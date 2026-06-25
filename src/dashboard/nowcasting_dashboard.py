@@ -124,7 +124,10 @@ class NowcastingDashboard:
             Output("val-current-vol", "children"),
             Output("val-predicted-vol", "children"),
             Output("val-max-rain", "children"),
-            Output("val-metrics", "children"),
+            Output("val-metrics-15m", "children"),
+            Output("val-metrics-1h", "children"),
+            Output("val-metrics-3h", "children"),
+            Output("val-metrics-total", "children"),
             Output("val-tracked", "children"),
             Output("val-in-roi", "children"),
             Output("frame-label", "children"),
@@ -242,7 +245,9 @@ class NowcastingDashboard:
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = self._build_final_report(run_mode, frame_idx, len(nc_files))
 
-        return (src, hist_vol, curr_vol, pred_vol, max_rain, metrics, tracked, in_roi,
+        # Doar fereastra de 15 min e calculata momentan; restul N/A pana la wiring complet.
+        return (src, hist_vol, curr_vol, pred_vol, max_rain,
+                metrics, "N/A", "N/A", "N/A", tracked, in_roi,
                 lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km)
 
     # ---- update_dashboard helpers -----------------------------------------
@@ -377,11 +382,11 @@ class NowcastingDashboard:
         curr_vol = f"{result.roi_volume_m3 / 1000.0:.2f} mii m³"
         pred_vol = f"{result.predicted_roi_volume_m3 / 1000.0:.2f} mii m³"
         max_rain = f"{result.max_rain:.2f}"
-        metrics = (f"{result.global_csi:.2f} / {result.global_far:.2f} / {result.global_pod:.2f}"
-                   if result.global_csi is not None else "N/A (Fără ploaie)")
+        metrics_total = (f"{result.global_csi:.2f} / {result.global_far:.2f} / {result.global_pod:.2f}"
+                         if result.global_csi is not None else "N/A (Fără ploaie)")
         tracked = f"{result.num_tracked}"
         in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
-        return hist_vol, curr_vol, pred_vol, max_rain, metrics, tracked, in_roi
+        return hist_vol, curr_vol, pred_vol, max_rain, metrics_total, tracked, in_roi
 
     def _build_final_report(self, run_mode, frame_idx, n_files):
         if run_mode == "live" or frame_idx != n_files - 1:
@@ -405,10 +410,12 @@ class NowcastingDashboard:
     # ---- canned responses --------------------------------------------------
     @staticmethod
     def _no_data_response():
-        return ("", "0.00", "0.00", "0.00", "0.0", "N/A", "0", "0", "Fără Date", "", "",
+        return ("", "0.00", "0.00", "0.00", "0.0",
+                "N/A", "N/A", "N/A", "N/A", "0", "0", "Fără Date", "", "",
                 False, dash.no_update, dash.no_update, dash.no_update)
 
     @staticmethod
     def _error_response(label):
-        return ("", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
+        return ("", "Eroare", "Eroare", "Eroare", "Eroare",
+                "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
                 f"Eroare fisier {label}", "", "", False, dash.no_update, dash.no_update, dash.no_update)

@@ -156,25 +156,34 @@ class DashboardLayout:
     def _content(self) -> html.Div:
         return html.Div(
             [
-                dbc.Row([
-                    dbc.Col(self._metric_card("Volum Acumulat (Istoric)", "val-historic-vol", "success", "success")),
-                    dbc.Col(self._metric_card("Aport Curent (15m)", "val-current-vol")),
-                    dbc.Col(self._metric_card("Volum Anticipat (Viitor)", "val-predicted-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain")),
-                ], className="mb-3"),
-                dbc.Row([
-                    dbc.Col(self._metric_card("Metrici (CSI/FAR/POD)", "val-metrics")),
-                    dbc.Col(self._metric_card("Celule Urmărite", "val-tracked")),
-                    dbc.Col(self._metric_card("Celule în ROI", "val-in-roi")),
-                ], className="mb-4"),
                 html.Div(id="final-report-div", className="mb-4"),
                 dbc.Card(
                     dbc.CardBody([
                         html.Img(id="map-image", style={"width": "100%", "borderRadius": "5px"})
                     ]),
                     className="shadow-sm border-secondary bg-dark",
+                    style={"margin-bottom": "20px"},
                 ),
-                html.Div(id="diagnostics-div", className="mb-4"),
+                html.H4("Volum", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                dbc.Row([
+                    dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Aport Curent (15m)", "val-current-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Anticipat (Viitor)", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
+                ], className="mb-3"),
+                html.H4("Metrici (CSI/FAR/POD)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                dbc.Row([
+                    dbc.Col(self._metric_card("Ultimele 15 minute", "val-metrics-15m", "success", "success")),
+                    dbc.Col(self._metric_card("Ultima oră", "val-metrics-1h", "success", "success")),
+                    dbc.Col(self._metric_card("Ultimele 3 ore", "val-metrics-3h", "success", "success")),
+                    dbc.Col(self._metric_card("Total", "val-metrics-total", "success", "success")),
+                ], className="mb-4"),
+                html.H4("Celule", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                dbc.Row([
+                    dbc.Col(self._metric_card("Urmărite", "val-tracked", "secondary", "light")),
+                    dbc.Col(self._metric_card("În ROI", "val-in-roi", "secondary", "light")),
+                ]),
+                html.Div(id="diagnostics-div", className="mb-4", style={"margin-top": "20px"}),
             ],
             className="p-4 bg-dark text-light h-100",
             style={"minHeight": "100vh"},
