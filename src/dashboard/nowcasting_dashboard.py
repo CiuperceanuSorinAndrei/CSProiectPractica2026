@@ -57,6 +57,12 @@ class NowcastingDashboard:
         print("Pornește serverul Dash... Deschide http://127.0.0.1:8050 în browser!")
         self.app.run(debug=debug, port=port)
 
+    # ---- callbacks --------------------------------------------------------
+    def _toggle_ui_elements(self, run_mode):
+        if run_mode == "live":
+            return {"display": "none"}, {"display": "none"}
+        return {"display": "block"}, {"display": "block"}
+
     # ---- callback registration --------------------------------------------
     def _register_callbacks(self) -> None:
         app = self.app
@@ -102,8 +108,16 @@ class NowcastingDashboard:
             Output("frame-slider", "value", allow_duplicate=True),
             Input("live-polling-interval", "n_intervals"),
             Input("run-mode-select", "value"),
+            State("frame-slider", "value"),
+            State("frame-slider", "max"),
             prevent_initial_call=True,
         )(self._poll_live_data)
+
+        app.callback(
+            Output("historic-controls-container", "style"),
+            Output("playback-controls-container", "style"),
+            Input("run-mode-select", "value")
+        )(self._toggle_ui_elements)
 
         app.callback(
             Output("download-status", "children"),
@@ -111,8 +125,8 @@ class NowcastingDashboard:
             Output("frame-slider", "value", allow_duplicate=True),
             Output("active-time-range", "data"),
             Input("btn-download", "n_clicks"),
-            State("start-date", "value"),
-            State("end-date", "value"),
+            State("start-date", "date"),
+            State("end-date", "date"),
             State("start-hour", "value"),
             State("end-hour", "value"),
             prevent_initial_call=True,
@@ -175,18 +189,32 @@ class NowcastingDashboard:
     @staticmethod
     def _toggle_live_mode(mode):
         is_live = (mode == "live")
-        # primul output e live-polling-interval (activ in LIVE); restul sunt controale istorice (dezactivate in LIVE)
-        return not is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live
+        # primul output e live-polling-interval (activ in LIVE)
+        # al 4-lea output e frame-slider.disabled (intotdeauna False)
+        # restul sunt controale istorice (dezactivate in LIVE)
+        return not is_live, is_live, is_live, False, is_live, is_live, is_live, is_live, is_live
 
-    def _poll_live_data(self, n_int, mode):
+    def _poll_live_data(self, n_int, mode, current_val, current_max):
         if mode != "live":
             raise PreventUpdate
         self._data_service.fetch_latest()
-        files = self._store.list()
+        files = self._store.filtered(time_range=None, run_mode="live")
         if not files:
             raise PreventUpdate
-        max_idx = len(files) - 1
-        return max_idx, max_idx
+        
+        new_max = len(files) - 1
+        
+        ctx = dash.callback_context
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
+        # Daca utilizatorul abia a comutat pe LIVE, fortam slider-ul la capat (prezent)
+        if triggered_id == "run-mode-select":
+            return new_max, new_max
+        
+        # Daca utilizatorul studia istoria (slider-ul nu era la capat), nu-i fortam valoarea la update-ul de 5 minute.
+        if current_val is not None and current_max is not None and current_val < current_max:
+            return new_max, dash.no_update
+        return new_max, new_max
 
     def _handle_reset(self, n_clicks):
         if n_clicks:
@@ -234,29 +262,31 @@ class NowcastingDashboard:
         center = self._resolve_center(loc_choice, m_lat, m_lon)
         bbox = self._compute_bbox(center, map_zoom)
 
-        result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km)
+        result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km, run_mode, time_range)
         if result is None:
             return self._error_response(label)
 
-        title = f"🔴 LIVE NOWCAST: {label} UTC" if run_mode == "live" else f"{label} UTC"
+        title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
         src = self._render_map(result, bbox, center, radius_km, title)
         diagnostics = self._build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, metrics, tracked, in_roi = self._format_metrics(result)
+        hist_vol, curr_vol, pred_vol, max_rain, m_15m, m_1h, m_2h, m_tot, tracked, in_roi = self._format_metrics(result)
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = self._build_final_report(run_mode, frame_idx, len(nc_files))
 
-        # Doar fereastra de 15 min e calculata momentan; restul N/A pana la wiring complet.
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
-                metrics, "N/A", "N/A", "N/A", tracked, in_roi,
+                m_15m, m_1h, m_2h, m_tot, tracked, in_roi,
                 lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km)
 
     # ---- update_dashboard helpers -----------------------------------------
-    def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km):
+    def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km, run_mode, time_range):
         """Proceseaza cadrul curent gestionand starea: avans consecutiv (acumuleaza),
         acelasi cadru (doar re-randare), sau salt (proceseaza cadrele omise). Returneaza
         FrameResult sau None (eroare/server ocupat)."""
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
+
+        dataset_id = (run_mode, str(time_range))
+        is_new_dataset = getattr(self, "_last_dataset_id", None) != dataset_id
 
         def run(idx):
             return self._orch.process_frame(
@@ -268,18 +298,31 @@ class NowcastingDashboard:
         is_consecutive = (frame_idx == hist.last_frame_idx + 1)
         is_same_frame = (frame_idx == hist.last_frame_idx)
 
-        if is_consecutive:
+        if is_new_dataset or frame_idx < hist.last_frame_idx:
+            # Schimbare de dataset sau Scrubbing backward: Reset complet
+            self._orch.reset_tracking()
+            self._history = FrameHistory()
+            self._last_dataset_id = dataset_id
+            hist = self._history
+            for i in range(0, frame_idx):
+                inter = run(i)
+                if inter:
+                    hist.accumulate(inter)
+            result = run(frame_idx)
+            if result is not None:
+                hist.accumulate(result)
+        elif is_consecutive:
             result = run(frame_idx)
             if result is None:
-                raise PreventUpdate
+                return None
             hist.accumulate(result)
         elif is_same_frame:
             # Zoom/rază schimbate: reprocesăm pentru vizualizare, dar NU atingem istoricul.
             result = run(frame_idx)
             if result is None:
-                raise PreventUpdate
+                return None
         else:
-            # Salt: procesăm cadrele omise (înainte) pentru a păstra continuitatea volumului.
+            # Salt inainte: procesăm cadrele omise (înainte) pentru a păstra continuitatea volumului.
             for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
                 inter = run(i)
                 if inter:
@@ -334,7 +377,7 @@ class NowcastingDashboard:
     def _render_map(result, bbox, center, radius_km, title) -> str:
         fig, ax, _ = StormMapPlotter.create_figure(
             result.lon_grid, result.lat_grid, result.rain_rate_masked,
-            extent=bbox, vmin=RAIN_THRESHOLD_MIN, vmax=RAIN_VMAX, title=title,
+            extent=bbox, vmin=0.1, vmax=RAIN_VMAX, title=title,
             roi_center=center, roi_radius_km=radius_km,
         )
         StormMapPlotter.draw_overlays(ax, result.tracked_cells, result.lon_grid, result.lat_grid)
@@ -382,27 +425,63 @@ class NowcastingDashboard:
         curr_vol = f"{result.roi_volume_m3 / 1000.0:.2f} mii m³"
         pred_vol = f"{result.predicted_roi_volume_m3 / 1000.0:.2f} mii m³"
         max_rain = f"{result.max_rain:.2f}"
-        metrics_total = (f"{result.global_csi:.2f} / {result.global_far:.2f} / {result.global_pod:.2f}"
-                         if result.global_csi is not None else "N/A (Fără ploaie)")
+
+        def fmt_avg(horizon):
+            c, f, p = self._history.averages(horizon)
+            if c is None:
+                return "N/A (Așteaptă)"
+            return f"{c:.2f} / {f:.2f} / {p:.2f}"
+
+        m_15m = fmt_avg("15m")
+        m_1h = fmt_avg("1h")
+        m_2h = fmt_avg("2h")
+            
+        # Calculam o medie globala (Total) intre toate orizonturile
+        avg_c, avg_f, avg_p, count = 0.0, 0.0, 0.0, 0
+        for h in ["15m", "1h", "2h"]:
+            c, f, p = self._history.averages(h)
+            if c is not None:
+                avg_c += c; avg_f += f; avg_p += p; count += 1
+                
+        if count > 0:
+            m_tot = f"{avg_c/count:.2f} / {avg_f/count:.2f} / {avg_p/count:.2f}"
+        else:
+            m_tot = "N/A (Așteaptă)"
+
         tracked = f"{result.num_tracked}"
         in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
-        return hist_vol, curr_vol, pred_vol, max_rain, metrics_total, tracked, in_roi
+        return hist_vol, curr_vol, pred_vol, max_rain, m_15m, m_1h, m_2h, m_tot, tracked, in_roi
 
     def _build_final_report(self, run_mode, frame_idx, n_files):
         if run_mode == "live" or frame_idx != n_files - 1:
             return ""
-        avg_csi, avg_far, avg_pod = self._history.averages()
+
+        def fmt_row(horizon, label):
+            c, f, p = self._history.averages(horizon)
+            if c is None:
+                return html.Tr([html.Td(label), html.Td("N/A"), html.Td("N/A"), html.Td("N/A")])
+            return html.Tr([html.Td(label), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"), html.Td(f"{p:.2f}")])
+
         return dbc.Alert(
             [
-                html.H4("Simulare Istorică Încheiată", className="alert-heading"),
-                html.P("Raport de Performanță al Algoritmului pentru intervalul analizat:"),
+                html.H4("Simulare Istorică Încheiată", className="alert-heading fw-bold"),
+                html.P("Raport agregat de performanță la finalul episodului selectat:"),
                 html.Hr(),
                 dbc.Row([
                     dbc.Col(html.Strong(f"Volum Total Precipitat (Bazin): {self._history.total_volume_m3 / 1000.0:.0f} mii m³")),
-                    dbc.Col(html.Strong(f"Acuratețe Detecție (CSI): {avg_csi:.2f}")),
-                    dbc.Col(html.Strong(f"Rată Alarme False (FAR): {avg_far:.2f}")),
-                    dbc.Col(html.Strong(f"Probabilitate Detecție (POD): {avg_pod:.2f}")),
-                ]),
+                    dbc.Col(html.Strong(f"Volum Total Anticipat (Bazin): {self._history.total_predicted_volume_m3 / 1000.0:.0f} mii m³")),
+                ], className="mb-3"),
+                dbc.Table(
+                    [
+                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("CSI"), html.Th("FAR"), html.Th("POD")])),
+                        html.Tbody([
+                            fmt_row("15m", "15 minute"),
+                            fmt_row("1h", "1 oră"),
+                            fmt_row("2h", "2 ore"),
+                        ])
+                    ],
+                    bordered=True, hover=True, size="sm", className="table-success mb-0"
+                )
             ],
             color="success",
         )

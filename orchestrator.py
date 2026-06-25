@@ -68,7 +68,7 @@ class Orchestrator:
         center_lat: float, center_lon: float, radius_km: float,
     ) -> FrameResult | None:
         """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking."""
-        if not self._lock.acquire(blocking=False):
+        if not self._lock.acquire(blocking=True):
             return None
             
         ds = NetCdfReader(file_path).load_data()
@@ -90,7 +90,8 @@ class Orchestrator:
             # Pregatire matrice precipitatii
             rain_rate = ds_cropped["rr"].values.copy()
             rain_rate[rain_rate < 0] = 0.0
-            rain_rate_masked = np.ma.masked_where(rain_rate < RAIN_THRESHOLD_MIN, rain_rate)
+            # Mascam doar valorile < 0.1 pentru a lasa burnita vizibila pe harta
+            rain_rate_masked = np.ma.masked_where(rain_rate < 0.1, rain_rate)
 
             # Calculam distanta pana la centru pentru a defini aria de interes (ROI) imediat
             dist_grid = self._haversine_dist_grid(center_lat, center_lon, lat_grid, lon_grid)
@@ -146,8 +147,8 @@ class Orchestrator:
                                 global_far[name] = ForecastMetrics.far(obs_mask, pred_mask)
                                 global_pod[name] = ForecastMetrics.pod(obs_mask, pred_mask)
 
-            # Aproximare grosiera a ariei: latimea longitudinala scade la poli
-            pixel_area_km2 = 3.0 * (3.0 * np.cos(np.radians(lat_grid)))
+            # Aproximare grosiera a ariei: unghiul de vizualizare oblic la poli dilata fizic pixelul
+            pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
 
             # Calculam volumul ACUMULAT din toate precipitațiile (inclusiv burnița de 0.1 mm/h)
             roi_volume_m3 = float(np.sum(rain_rate[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
@@ -173,12 +174,12 @@ class Orchestrator:
                 shifted_rain = cv2.remap(rain_rate, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
                 
                 # Decadere termodinamica
-                decay_factor = 0.95 ** steps
+                decay_factor = 0.98 ** steps
                 shifted_rain *= decay_factor
                 
                 # Estompare Gaussiana (Covariance Blurring) din Faza 7
                 if steps > 1:
-                    sigma = min(steps * 0.4, 5.0)
+                    sigma = min(steps * 0.2, 3.0)
                     shifted_rain = ndimage.gaussian_filter(shifted_rain, sigma=sigma)
                     
                 # Masca booleană pentru calcul CSI

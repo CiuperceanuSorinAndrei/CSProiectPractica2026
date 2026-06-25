@@ -50,7 +50,7 @@ class ForecastMetrics:
         for idx in range(paired):
             oy, ox = observed_centroids[idx]
             py, px = predicted_centroids[idx]
-            errors.append(float(np.sqrt((px - ox) ** 2 + (py - oy) ** 2)))
+            errors.append(float(abs(px - ox) + abs(py - oy)))
         return float(np.mean(errors)) if errors else 0.0
 
     @staticmethod

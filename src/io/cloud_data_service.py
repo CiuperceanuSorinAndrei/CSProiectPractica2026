@@ -16,10 +16,11 @@ class CloudDataService:
     deja prezente local, deci re-descarcarea unui interval este ieftina.
     """
 
-    _ftp_client: FtpClient = FtpClient(
-        FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER,
-        timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
-    )
+    def __init__(self):
+        self._ftp_client = FtpClient(
+            FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER,
+            timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
+        )
 
     # Descarca toate cadrele (la 15 min) din intervalul [start_dt, end_dt].
     # Returneaza numarul de fisiere noi descarcate (cele deja locale sunt sarite).
@@ -42,30 +43,28 @@ class CloudDataService:
     def fetch_latest(self) -> str | None:
         self._ftp_client.connect()
         try:
-            # Obtinem lista de pe server
-            files = self._ftp_client._current_ftp.nlst()
-            # Filtram si sortam alfabetic. Ultimul fisier este cel mai recent.
-            h60_files = sorted([f for f in files if f.startswith('h60_') and f.endswith('_fdk.nc.gz')])
+            # Deterministic fallback instead of nlst() block
+            now = datetime.datetime.now(datetime.timezone.utc)
+            minute = (now.minute // 15) * 15
+            search_time = now.replace(minute=minute, second=0, microsecond=0)
             
-            if not h60_files:
+            latest_file = None
+            for step in range(5):  # Verificam pana la 1 ora in urma (H-SAF are uneori lag)
+                test_time = search_time - timedelta(minutes=15 * step)
+                filename = self._h60_filename(test_time)
+                if self._ftp_client.file_size(filename) is not None:
+                    latest_file = filename
+                    search_time = test_time
+                    break
+                    
+            if not latest_file:
                 return None
                 
-            latest_file = h60_files[-1]
             final_nc_path = os.path.join(DATA_RAW_DIR, latest_file[:-3])
             
-            # Verificam data / time din filename pentru flow history
-            # Format: h60_YYYYMMDD_HHMM_fdk.nc.gz
-            parts = latest_file.split('_')
-            if len(parts) >= 3:
-                date_str = parts[1]
-                time_str = parts[2]
-                search_time = datetime.datetime.strptime(date_str + time_str, "%Y%m%d%H%M")
-            else:
-                search_time = datetime.datetime.now(datetime.timezone.utc)
-
             if os.path.exists(final_nc_path):
-                # E deja local, vedem daca e fixat corect.
-                # Aici returnam calea direct, insemnand ca FTP-ul nu are ceva nou inca
+                # Desi e local, trebuie sa ne asiguram ca avem istoricul flow-ului complet
+                self._download_flow_history(search_time)
                 return final_nc_path
 
             # Altfel il descarcam

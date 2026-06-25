@@ -102,9 +102,24 @@ class StormTracker:
                 o_mask = self.build_cell_mask(c_cell, rain_matrix)
                 
                 if t_mask is not None and o_mask is not None:
-                    intersection = float(np.sum((t_mask > 0) & (o_mask > 0)))
-                    union = float(np.sum((t_mask > 0) | (o_mask > 0)))
-                    iou = intersection / union if union > 0 else 0.0
+                    c_coords = c_cell.get("coords", np.array([]))
+                    p_coords = p_cell.get("coords", np.array([]))
+                    
+                    if len(c_coords) > 0 and len(p_coords) > 0:
+                        # Calculam bounding box combinat limitat de marginile imaginii
+                        min_y = max(0, min(np.min(c_coords[:, 0]), np.min(p_coords[:, 0])) - 5)
+                        max_y = min(rain_matrix.shape[0], max(np.max(c_coords[:, 0]), np.max(p_coords[:, 0])) + 5)
+                        min_x = max(0, min(np.min(c_coords[:, 1]), np.min(p_coords[:, 1])) - 5)
+                        max_x = min(rain_matrix.shape[1], max(np.max(c_coords[:, 1]), np.max(p_coords[:, 1])) + 5)
+                        
+                        t_slice = t_mask[min_y:max_y, min_x:max_x] > 0
+                        o_slice = o_mask[min_y:max_y, min_x:max_x] > 0
+                        
+                        intersection = float(np.sum(t_slice & o_slice))
+                        union = float(np.sum(t_slice | o_slice))
+                        iou = intersection / union if union > 0 else 0.0
+                    else:
+                        iou = 0.0
                 else:
                     iou = self._coords_iou(c_cell.get("coords"), p_cell.get("coords"))
                 
@@ -188,26 +203,8 @@ class StormTracker:
 
                 max_y, max_x = rain_matrix.shape
                 cy, cx = c_cell["centroid_y"], c_cell["centroid_x"]
-                is_on_edge = (cy < 5) or (cy > max_y - 5) or (cx < 5) or (cx > max_x - 5)
-
-                if is_on_edge:
-                    kf_dict["CV"].R *= 100.0
-                    kf_dict["CA"].R *= 100.0
-                    kf_dict["CV"].update(obs_z)
-                    kf_dict["CA"].update(obs_z)
-                    kf_dict["CV"].R /= 100.0
-                    kf_dict["CA"].R /= 100.0
-                elif self.USE_ADAPTIVE_KALMAN and tracked_cell["prediction_error_pixels"] > 1.5:
-                    # Incredere maxima in masuratoare pt a prinde virajul
-                    kf_dict["CV"].R /= 10.0
-                    kf_dict["CA"].R /= 10.0
-                    kf_dict["CV"].update(obs_z)
-                    kf_dict["CA"].update(obs_z)
-                    kf_dict["CV"].R *= 10.0
-                    kf_dict["CA"].R *= 10.0
-                else:
-                    kf_dict["CV"].update(obs_z)
-                    kf_dict["CA"].update(obs_z)
+                kf_dict["CV"].update(obs_z)
+                kf_dict["CA"].update(obs_z)
 
                 # Switching: Alegem modelul care a avut eroarea (residual y) mai mica
                 err_cv = np.linalg.norm(kf_dict["CV"].y)
@@ -296,6 +293,10 @@ class StormTracker:
             else:
                 shift_x = tracked_cell["v_x"]
                 shift_y = tracked_cell["v_y"]
+
+            cached_mask = c_cell.get("_cached_mask")
+            if cached_mask is not None:
+                tracked_cell["predicted_mask"] = self.translate_mask(cached_mask, shift_y, shift_x)
 
             trend = self._compute_area_trend(tracked_cell)
             tracked_cell["volume_trend"] = trend
@@ -386,13 +387,24 @@ class StormTracker:
             min_a[1] > max_b[1] or max_a[1] < min_b[1]):
             return 0.0
 
-        set_a = set(map(tuple, coords_a))
-        set_b = set(map(tuple, coords_b))
-        intersection = len(set_a.intersection(set_b))
+        # Construct local bounding box array for fast intersection
+        min_y, min_x = min(min_a[0], min_b[0]), min(min_a[1], min_b[1])
+        max_y, max_x = max(max_a[0], max_b[0]), max(max_a[1], max_b[1])
+        
+        h = max_y - min_y + 1
+        w = max_x - min_x + 1
+        
+        mask_a = np.zeros((h, w), dtype=bool)
+        mask_b = np.zeros((h, w), dtype=bool)
+        
+        mask_a[arr_a[:, 0] - min_y, arr_a[:, 1] - min_x] = True
+        mask_b[arr_b[:, 0] - min_y, arr_b[:, 1] - min_x] = True
+        
+        intersection = float(np.sum(mask_a & mask_b))
         if intersection == 0:
             return 0.0
-        union = len(set_a.union(set_b))
-        return float(intersection / union)
+        union = float(np.sum(mask_a | mask_b))
+        return intersection / union
 
 
 
