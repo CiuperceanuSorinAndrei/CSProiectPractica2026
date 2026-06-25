@@ -13,6 +13,7 @@ import threading
 
 import numpy as np
 import scipy.sparse as sp
+import scipy.ndimage as ndimage
 
 from src.core.storm_cell_detector import StormCellDetector
 from src.core.storm_tracker import StormTracker
@@ -38,6 +39,7 @@ class FrameResult:
     num_tracked: int
     roi_volume_m3: float  # Volumul de precipitatii in ROI in metri cubi / ora
     predicted_roi_volume_m3: float  # Volumul prezis in ROI pentru cadrul urmator
+    predicted_volumes_horizons: dict[str, float] # Volumele prezise pe toate orizonturile
     global_csi: dict[str, float]
     global_far: dict[str, float]
     global_pod: dict[str, float]
@@ -144,82 +146,50 @@ class Orchestrator:
                                 global_far[name] = ForecastMetrics.far(obs_mask, pred_mask)
                                 global_pod[name] = ForecastMetrics.pod(obs_mask, pred_mask)
 
-            # Aproximare aria unui pixel (~3km * 3km / cos(lat)). Folosim latitudinile grilei.
-            pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
+            # Aproximare grosiera a ariei: latimea longitudinala scade la poli
+            pixel_area_km2 = 3.0 * (3.0 * np.cos(np.radians(lat_grid)))
 
             # Calculam volumul ACUMULAT din toate precipitațiile (inclusiv burnița de 0.1 mm/h)
             roi_volume_m3 = float(np.sum(rain_rate[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
 
-            # Calcul Volum Prezis Acumulat in ROI pentru următorul pas (15 minute)
-            # Evităm supra-numărarea (multi-counting) evaluând strict T+15m
-            MAX_FORECAST_FRAMES = 1
+            # Faza 9: Global Advection via Sparse Interpolation
+            import cv2
+            flow_x, flow_y = StormTracker.generate_global_flow_field(rain_rate.shape, tracked_cells)
+            
+            horizons = [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]
+            new_global_preds = {}
+            predicted_volumes_horizons = {}
             total_predicted_volume_m3 = 0.0
-
-            for cell in tracked_cells:
-                # Verificam daca centroizii curenti sunt in ROI
-                c_dist = self._haversine_dist_grid(
-                    center_lat, center_lon, np.array([cell["geo_lat"]]), np.array([cell["geo_lon"]]),
-                )[0]
-                cell["in_roi"] = bool(c_dist <= radius_km)
-
-                # Simulam si integram volumul pe traiectoria viitoare
-                if cell.get("is_tracked", False) and "coords" in cell:
-                    mean_int = cell.get("mean_intensity", 0.0)
-                    vx = cell.get("v_x", 0.0)
-                    vy = cell.get("v_y", 0.0)
-
-                    coords = np.asarray(cell["coords"])
-                    if len(coords) == 0:
-                        continue
-                        
-                    grid_h, grid_w = rain_rate.shape
-
-                    # Daca sta pe loc complet (viteza aproape 0), previne bucla artificiala pt 3 ore
-                    if abs(vx) < 0.1 and abs(vy) < 0.1:
-                        frames_to_sim = 1
-                    else:
-                        frames_to_sim = MAX_FORECAST_FRAMES
-
-                    for step in range(1, frames_to_sim + 1):
-                        shifted_y = np.rint(coords[:, 0] + step * vy).astype(int)
-                        shifted_x = np.rint(coords[:, 1] + step * vx).astype(int)
-
-                        # Filtram coordonatele care ies in afara grilei
-                        valid = (shifted_y >= 0) & (shifted_y < grid_h) & (shifted_x >= 0) & (shifted_x < grid_w)
-                        if not np.any(valid):
-                            if step > 1 and total_predicted_volume_m3 > 0:
-                                break
-                            continue
-                            
-                        val_y = shifted_y[valid]
-                        val_x = shifted_x[valid]
-
-                        # Verificam suprapunerea directa cu bazinul
-                        in_roi = roi_mask[val_y, val_x]
-                        num_pixels_overlap = np.sum(in_roi)
-
-                        if num_pixels_overlap > 0:
-                            # Insumam strict aria pixelilor mutati care au cazut in ROI
-                            area_overlap_km2 = np.sum(pixel_area_km2[val_y[in_roi], val_x[in_roi]])
-                            # Aplicam factor de decadere (decay) pt volum: scade cu ~8% la fiecare cadru
-                            decay_factor = 0.92 ** step
-                            vol_step_m3 = float(area_overlap_km2 * mean_int * 250.0) * decay_factor
-                            total_predicted_volume_m3 += vol_step_m3
-                        elif step > 1 and total_predicted_volume_m3 > 0:
-                            # Am iesit complet din ROI, n-are rost sa simulam restul pasilor din viitor
-                            break
-
-            # Construim noile masti globale pentru T+N
-            new_global_preds = {"15m": np.zeros(rain_rate.shape, dtype=np.float32), 
-                                "1h": np.zeros(rain_rate.shape, dtype=np.float32),
-                                "2h": np.zeros(rain_rate.shape, dtype=np.float32),
-                                "5h": np.zeros(rain_rate.shape, dtype=np.float32)}
-                                
-            for cell in tracked_cells:
-                if cell.get("is_tracked", False) and "predicted_masks" in cell:
-                    for name in new_global_preds.keys():
-                        if cell["predicted_masks"].get(name) is not None:
-                            new_global_preds[name] = np.maximum(new_global_preds[name], cell["predicted_masks"][name])
+            
+            grid_h, grid_w = rain_rate.shape
+            y_grid, x_grid = np.mgrid[0:grid_h, 0:grid_w].astype(np.float32)
+            
+            # Advecție globală (toată harta dintr-o mișcare)
+            for steps, name in horizons:
+                map_x = x_grid - flow_x * steps
+                map_y = y_grid - flow_y * steps
+                
+                # Mutăm precipitațiile
+                shifted_rain = cv2.remap(rain_rate, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                
+                # Decadere termodinamica
+                decay_factor = 0.95 ** steps
+                shifted_rain *= decay_factor
+                
+                # Estompare Gaussiana (Covariance Blurring) din Faza 7
+                if steps > 1:
+                    sigma = min(steps * 0.4, 5.0)
+                    shifted_rain = ndimage.gaussian_filter(shifted_rain, sigma=sigma)
+                    
+                # Masca booleană pentru calcul CSI
+                new_global_preds[name] = (shifted_rain >= RAIN_THRESHOLD_MIN).astype(np.float32)
+                
+                # Calcul Volum (toată ploaia din ROI, inclusiv aia fină > 0.0)
+                vol = float(np.sum(shifted_rain[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
+                predicted_volumes_horizons[name] = vol
+                
+                if steps == 1:
+                    total_predicted_volume_m3 = vol
 
             # Convertim in sparse matrix pentru a economisi memorie (salvam 95% RAM)
             sparse_preds = {name: sp.csr_matrix(mask) for name, mask in new_global_preds.items()}
@@ -229,7 +199,7 @@ class Orchestrator:
 
             # Calcul metrici de eroare pe celulele urmarite
             valid_errors = [
-                c["prediction_error_pixels"]
+                c.get("prediction_error_pixels", 0.0)
                 for c in tracked_cells
                 if c.get("is_tracked", False)
             ]
@@ -248,9 +218,10 @@ class Orchestrator:
                 max_rain=max_rain,
                 mean_centroid_error=float(np.mean(valid_errors)) if valid_errors else 0.0,
                 mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
-                num_tracked=len(valid_errors),
+                num_tracked=len([c for c in tracked_cells if c.get("is_tracked", False)]),
                 roi_volume_m3=roi_volume_m3,
                 predicted_roi_volume_m3=total_predicted_volume_m3,
+                predicted_volumes_horizons=predicted_volumes_horizons,
                 global_csi=global_csi,
                 global_far=global_far,
                 global_pod=global_pod,

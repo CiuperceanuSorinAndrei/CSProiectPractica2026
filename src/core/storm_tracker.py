@@ -25,9 +25,26 @@ class StormTracker:
     _previous_cells: list = None
     _previous_rain_matrix: Any = None
 
-    def __init__(self, max_dist_pixels: int = 18):
+    def __init__(self, max_dist_pixels: int = 15):
         self._max_dist_pixels = max_dist_pixels
-        self.reset()
+        self._kalman_bank: dict[str, dict] = {}
+        self._active_tracks: dict[str, dict] = {}
+        self._previous_cells: list[dict] = []
+        self._previous_rain_matrix: np.ndarray | None = None
+        self._track_counter = 0
+
+    @staticmethod
+    def build_cell_mask(cell: dict, rain_matrix: np.ndarray) -> np.ndarray:
+        """Construieste masca binara a unei celule pe dimensiunea matricei de ploaie."""
+        if "_cached_mask" in cell:
+            return cell["_cached_mask"]
+
+        mask = np.zeros_like(rain_matrix, dtype=np.uint8)
+        coords = cell.get("coords", np.array([]))
+        if len(coords) > 0:
+            mask[coords[:, 0], coords[:, 1]] = 1
+        cell["_cached_mask"] = mask
+        return mask
 
     def reset(self) -> None:
         """Goleste complet starea de tracking."""
@@ -54,10 +71,6 @@ class StormTracker:
         for c_cell in current_cells:
             if self.USE_PARALLAX_CORRECTION:
                 c_cell["centroid_y"] += 2.0
-                coords = c_cell.get("coords", np.array([]))
-                if len(coords) > 0:
-                    grid_h = rain_matrix.shape[0]
-                    coords[:, 0] = np.clip(coords[:, 0] + 2, 0, grid_h - 1)
 
             c_area = c_cell.get("area_pixels", c_cell.get("area", 1.0))
             c_max = c_cell.get("max_intensity", 1.0)
@@ -83,6 +96,18 @@ class StormTracker:
                 best_model = self._kalman_bank[p_id]["best"]
                 pred_x = self._kalman_bank[p_id][best_model].x[0, 0]
                 pred_y = self._kalman_bank[p_id][best_model].x[1, 0]
+                
+                # Urmareste predictia curenta de la Kalman
+                t_mask = p_cell.get("predicted_mask", p_cell.get("_cached_mask"))
+                o_mask = self.build_cell_mask(c_cell, rain_matrix)
+                
+                if t_mask is not None and o_mask is not None:
+                    intersection = float(np.sum((t_mask > 0) & (o_mask > 0)))
+                    union = float(np.sum((t_mask > 0) | (o_mask > 0)))
+                    iou = intersection / union if union > 0 else 0.0
+                else:
+                    iou = self._coords_iou(c_cell.get("coords"), p_cell.get("coords"))
+                
                 radius_limit = max(
                     self._max_dist_pixels,
                     self._adaptive_match_radius(p_cell.get("area_pixels", p_cell.get("area", 1.0))),
@@ -104,7 +129,7 @@ class StormTracker:
                 volume_ratio = min(c_volume, p_volume) / (max(c_volume, p_volume) + 1e-5)
                 volume_penalty = 1.0 - volume_ratio
 
-                iou = self._coords_iou(c_cell.get("coords"), p_cell.get("coords"))
+
                 iou_penalty = 1.0 - iou
 
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
@@ -253,18 +278,7 @@ class StormTracker:
             tracked_cell["v_x"] = current_kf.x[2, 0]
             tracked_cell["v_y"] = current_kf.x[3, 0]
 
-            if len(tracked_cell["centroid_history"]) >= 2:
-                history = tracked_cell["centroid_history"]
-                deltas_x = [history[idx][1] - history[idx - 1][1] for idx in range(1, len(history))]
-                deltas_y = [history[idx][0] - history[idx - 1][0] for idx in range(1, len(history))]
 
-                obs_v_x = float(np.mean(deltas_x[-3:]))
-                obs_v_y = float(np.mean(deltas_y[-3:]))
-                tracked_cell["v_x"] = 0.4 * tracked_cell["v_x"] + 0.6 * obs_v_x
-                tracked_cell["v_y"] = 0.4 * tracked_cell["v_y"] + 0.6 * obs_v_y
-                # Sincronizam inapoi viteza observata doar in modelul curent ales
-                current_kf.x[2, 0] = tracked_cell["v_x"]
-                current_kf.x[3, 0] = tracked_cell["v_y"]
 
             predicted_centroid_x = tracked_cell["centroid_x"] + tracked_cell["v_x"]
             predicted_centroid_y = tracked_cell["centroid_y"] + tracked_cell["v_y"]
@@ -283,34 +297,14 @@ class StormTracker:
                 shift_x = tracked_cell["v_x"]
                 shift_y = tracked_cell["v_y"]
 
-            predicted_area_trend = self._compute_area_trend(tracked_cell)
-            scale_factor = float(np.clip(np.sqrt(predicted_area_trend), 0.97, 1.05))
-            predicted_area_pixels = int(round(max(c_area, 1.0) * predicted_area_trend))
-
-            predicted_masks = {}
-            for steps, name in [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]:
-                mask = self._predict_mask_shape(
-                    coords, rain_matrix,
-                    tracked_cell["centroid_y"],
-                    tracked_cell["centroid_x"],
-                    shift_y * steps, shift_x * steps,
-                    scale_factor ** steps,
-                )
-                if mask is not None:
-                    # Aplicam Thermodynamic Decay Factor (5% reducere a intensitatii la fiecare 15 min)
-                    # La 1 ora (4 steps), intensitatea scade cu ~18%. La 5 ore (20 steps) cu ~65%.
-                    decay_factor = 0.95 ** steps
-                    mask = mask * decay_factor
-                predicted_masks[name] = mask
-
-            tracked_cell["predicted_masks"] = predicted_masks
-            tracked_cell["predicted_mask"] = predicted_masks["15m"]  # backward compatibility
+            trend = self._compute_area_trend(tracked_cell)
+            tracked_cell["volume_trend"] = trend
+            predicted_area_pixels = int(round(max(c_area, 1.0) * trend))
             tracked_cell["predicted_area_pixels"] = predicted_area_pixels
             tracked_cell["size_error_pixels"] = abs(predicted_area_pixels - int(c_area))
             tracked_cell["size_error_percent"] = (
                 100.0 * tracked_cell["size_error_pixels"] / max(int(c_area), 1)
             )
-            tracked_cell["area_trend"] = predicted_area_trend
             tracked_cells.append(tracked_cell)
 
         # Cleanup: stergem filtrele Kalman pentru celulele moarte
@@ -322,6 +316,38 @@ class StormTracker:
         self._previous_rain_matrix = rain_matrix.copy()
 
         return tracked_cells
+
+    @staticmethod
+    def generate_global_flow_field(grid_shape: tuple[int, int], tracked_cells: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
+        from scipy.interpolate import griddata
+        h, w = grid_shape
+        if not tracked_cells:
+            return np.zeros((h, w), dtype=np.float32), np.zeros((h, w), dtype=np.float32)
+            
+        pts, vxs, vys = [], [], []
+        for c in tracked_cells:
+            if c.get("is_tracked", False):
+                pts.append([c["centroid_y"], c["centroid_x"]])
+                vxs.append(c.get("v_x", 0.0))
+                vys.append(c.get("v_y", 0.0))
+                
+        if not pts:
+            return np.zeros((h, w), dtype=np.float32), np.zeros((h, w), dtype=np.float32)
+            
+        pts = np.array(pts)
+        vxs = np.array(vxs)
+        vys = np.array(vys)
+        
+        if len(pts) == 1:
+            return np.full((h, w), vxs[0], dtype=np.float32), np.full((h, w), vys[0], dtype=np.float32)
+            
+        # Interpolare Nearest pentru a extinde viteza pe toata harta fara goluri
+        y_grid, x_grid = np.mgrid[0:h, 0:w]
+        flow_x = griddata(pts, vxs, (y_grid, x_grid), method='nearest').astype(np.float32)
+        flow_y = griddata(pts, vys, (y_grid, x_grid), method='nearest').astype(np.float32)
+        
+        return flow_x, flow_y
+
 
     @staticmethod
     def _compute_area_trend(tracked_cell: dict) -> float:
@@ -368,76 +394,7 @@ class StormTracker:
         union = len(set_a.union(set_b))
         return float(intersection / union)
 
-    @staticmethod
-    def _predict_mask_shape(
-        coords: np.ndarray | None,
-        rain_matrix: np.ndarray,
-        center_y: float, center_x: float,
-        shift_y: float, shift_x: float,
-        scale_factor: float,
-    ) -> np.ndarray | None:
-        """Prezice forma deformand direct rain_matrix, salvand memorie si precizie."""
-        if coords is None or len(coords) == 0:
-            return None
 
-        h, w = rain_matrix.shape
-        grid_shape = (h, w)
-        # Gasim Bounding Box-ul stramt
-        min_y, max_y = np.min(coords[:, 0]), np.max(coords[:, 0])
-        min_x, max_x = np.min(coords[:, 1]), np.max(coords[:, 1])
-
-        # Adaugam un padding generos pentru a permite miscarea si extinderea (ex. max shift 30 pixeli + 20 px padding)
-        pad = int(max(abs(shift_y), abs(shift_x)) + 20)
-        y0 = max(0, min_y - pad)
-        y1 = min(h, max_y + pad + 1)
-        x0 = max(0, min_x - pad)
-        x1 = min(w, max_x + pad + 1)
-
-        bb_h, bb_w = y1 - y0, x1 - x0
-        if bb_h <= 0 or bb_w <= 0:
-            return None
-
-        # Construim o masca locala cu valorile rain_rate reale
-        local_mask = np.zeros((bb_h, bb_w), dtype=np.float32)
-        local_mask[coords[:, 0] - y0, coords[:, 1] - x0] = rain_matrix[coords[:, 0], coords[:, 1]]
-
-        if (bb_h, bb_w) not in _mgrid_cache:
-            if len(_mgrid_cache) >= _MGRID_CACHE_MAXSIZE:
-                _mgrid_cache.popitem(last=False)
-            _mgrid_cache[(bb_h, bb_w)] = np.mgrid[0:bb_h, 0:bb_w].astype(np.float32)
-        else:
-            _mgrid_cache.move_to_end((bb_h, bb_w))
-
-        y_coords, x_coords = _mgrid_cache[(bb_h, bb_w)]
-        
-        map_x = (x_coords - shift_x).astype(np.float32)
-        map_y = (y_coords - shift_y).astype(np.float32)
-        
-        warped_local = cv2.remap(
-            local_mask, map_x, map_y, 
-            interpolation=cv2.INTER_LINEAR, 
-            borderMode=cv2.BORDER_CONSTANT, borderValue=0
-        )
-        
-        if abs(scale_factor - 1.0) > 1e-4:
-            # Centrul local in Bounding Box
-            local_center_x = center_x - x0
-            local_center_y = center_y - y0
-            matrix = np.array([
-                [scale_factor, 0.0, (1.0 - scale_factor) * local_center_x],
-                [0.0, scale_factor, (1.0 - scale_factor) * local_center_y],
-            ], dtype=np.float32)
-            
-            warped_local = cv2.warpAffine(
-                warped_local, matrix, (bb_w, bb_h),
-                flags=cv2.INTER_LINEAR, borderValue=0,
-            )
-            
-        # Returnam direct valorile deformate (float32, adica rain_rate)
-        # in loc de uint8 binar
-        full_mask = np.zeros(grid_shape, dtype=np.float32)
-        full_mask[y0:y1, x0:x1] = warped_local
-        return full_mask
 
     @staticmethod
     def _instantiate_kalman_filter(

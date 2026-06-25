@@ -364,9 +364,16 @@ def auto_advance_frame(n, is_processing, current_frame, max_frame):
 )
 def toggle_live_mode(mode):
     is_live = (mode == "live")
-    # Cand e LIVE, dezactivam controalele istorice si pornim polling-ul
-    # primul e live-polling-interval (disabled = not is_live)
-    # restul sunt butoanele istorice (disabled = is_live)
+    if is_live:
+        historic_state["last_frame_idx"] = -1
+        historic_state["total_volume_m3"] = 0.0
+        historic_state["csi"].clear()
+        historic_state["far"].clear()
+        historic_state["pod"].clear()
+        historic_state["centroid_err"].clear()
+        historic_state["predicted_vol"] = 0.0
+        orch.reset_tracking()
+
     return not is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live
 
 
@@ -546,19 +553,19 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
         if result is None:
             raise PreventUpdate
     else:
-        # A avut loc un "jump" real. Daca e inainte, continuam calculul pentru toate cadrele omise.
-        # Daca e inapoi, istoricul a fost deja curatat mai sus si o luam de la 0.
-        start_process_idx = max(0, historic_state["last_frame_idx"] + 1)
-        for i in range(start_process_idx, frame_idx):
-            w_path = os.path.join(DATA_DIR, nc_files[i])
-            inter_result = orch.process_frame(w_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
-            if inter_result:
-                historic_state["total_volume_m3"] += inter_result.roi_volume_m3
-                if inter_result.global_csi is not None: historic_state["csi"].append(inter_result.global_csi)
-                if inter_result.global_far is not None: historic_state["far"].append(inter_result.global_far)
-                if inter_result.global_pod is not None: historic_state["pod"].append(inter_result.global_pod)
-                historic_state["centroid_err"].append(inter_result.mean_centroid_error)
-                historic_state["predicted_vol"] += inter_result.predicted_roi_volume_m3
+        # A avut loc un "jump" real. 
+        if run_mode == "historic":
+            start_process_idx = max(0, historic_state["last_frame_idx"] + 1)
+            for i in range(start_process_idx, frame_idx):
+                w_path = os.path.join(DATA_DIR, nc_files[i])
+                inter_result = orch.process_frame(w_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
+                if inter_result:
+                    historic_state["total_volume_m3"] += inter_result.roi_volume_m3
+                    if inter_result.global_csi is not None: historic_state["csi"].append(inter_result.global_csi)
+                    if inter_result.global_far is not None: historic_state["far"].append(inter_result.global_far)
+                    if inter_result.global_pod is not None: historic_state["pod"].append(inter_result.global_pod)
+                    historic_state["centroid_err"].append(inter_result.mean_centroid_error)
+                    historic_state["predicted_vol"] += inter_result.predicted_roi_volume_m3
 
         result = orch.process_frame(file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
         if result is None:
@@ -575,7 +582,7 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
 
     title = f"{current_label} UTC"
     if run_mode == "live":
-        title = f"🔴 LIVE NOWCAST: {current_label} UTC"
+        title = f"[LIVE] NOWCAST: {current_label} UTC"
 
     fig, ax, _ = StormMapPlotter.create_figure(
         result.lon_grid, result.lat_grid, result.rain_rate_masked,
@@ -636,8 +643,10 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
     # Raportul final doar in modul istoric cand a ajuns la capat
     if run_mode != "live" and frame_idx == len(nc_files) - 1:
         if historic_state["csi"] and isinstance(historic_state["csi"][0], dict):
-            csi_15m = np.mean([d.get("15m", 0) for d in historic_state["csi"] if "15m" in d])
-            csi_1h = np.mean([d.get("1h", 0) for d in historic_state["csi"] if "1h" in d])
+            vals_15m = [d.get("15m", 0) for d in historic_state["csi"] if "15m" in d]
+            vals_1h = [d.get("1h", 0) for d in historic_state["csi"] if "1h" in d]
+            csi_15m = float(np.mean(vals_15m)) if vals_15m else 0.0
+            csi_1h = float(np.mean(vals_1h)) if vals_1h else 0.0
         else:
             csi_15m, csi_1h = 0.0, 0.0
 

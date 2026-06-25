@@ -38,6 +38,10 @@ class StormCellDetector:
         large_labels = self._label_connected_components(rain_matrix, large_mask)
         cells = self._extract_components_from_labels(rain_matrix, large_labels, self._min_size)
 
+        # Daca pragurile sunt identice, Pass 2 e inutil (risipa de CPU)
+        if abs(small_thr - large_thr) < 1e-5 and self._small_cell_max_area is None:
+            return cells
+
         # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
         seen_mask = np.zeros(rain_matrix.shape, dtype=bool)
         for cell in cells:
