@@ -23,6 +23,15 @@ from src.io.netcdf_reader import NetCdfReader
 from config import RAIN_THRESHOLD_MIN, MAX_TRACKING_DISTANCE_PX
 
 
+class ServerBusy(Exception):
+    """Ridicata cand un alt cadru este deja in procesare (lock-ul orchestratorului e ocupat).
+
+    Spre deosebire de o eroare reala (fisier corupt / in afara imaginii), care intoarce
+    None, aceasta semnaleaza o stare TRANZITORIE: apelantul ar trebui sa sara peste update
+    (PreventUpdate), nu sa afiseze o eroare in interfata.
+    """
+
+
 @dataclass
 class FrameResult:
     """Rezultatul procesarii unui cadru complet."""
@@ -66,8 +75,9 @@ class Orchestrator:
     ) -> FrameResult | None:
         """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking."""
         if not self._lock.acquire(blocking=False):
-            return None
-            
+            # Server ocupat (alt cadru in procesare) -> stare tranzitorie, nu eroare reala.
+            raise ServerBusy()
+
         ds = NetCdfReader(file_path).load_data()
         if ds is None:
             self._lock.release()

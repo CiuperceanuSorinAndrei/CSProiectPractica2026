@@ -14,7 +14,7 @@ from dash import html, Input, Output, State
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
-from orchestrator import Orchestrator
+from orchestrator import Orchestrator, ServerBusy
 from src.io.cloud_data_service import CloudDataService
 from src.ui_helpers.plotting import StormMapPlotter
 from config import PREDEFINED_LOCATIONS, RAIN_VMAX, RAIN_THRESHOLD_MIN, BASE_DIR
@@ -268,26 +268,32 @@ class NowcastingDashboard:
         is_consecutive = (frame_idx == hist.last_frame_idx + 1)
         is_same_frame = (frame_idx == hist.last_frame_idx)
 
-        if is_consecutive:
-            result = run(frame_idx)
-            if result is None:
-                raise PreventUpdate
-            hist.accumulate(result)
-        elif is_same_frame:
-            # Zoom/rază schimbate: reprocesăm pentru vizualizare, dar NU atingem istoricul.
-            result = run(frame_idx)
-            if result is None:
-                raise PreventUpdate
-        else:
-            # Salt: procesăm cadrele omise (înainte) pentru a păstra continuitatea volumului.
-            for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
-                inter = run(i)
-                if inter:
-                    hist.accumulate(inter)
-            result = run(frame_idx)
-            if result is None:
-                return None
-            hist.accumulate(result)
+        try:
+            if is_consecutive:
+                result = run(frame_idx)
+                if result is None:
+                    raise PreventUpdate
+                hist.accumulate(result)
+            elif is_same_frame:
+                # Zoom/rază schimbate: reprocesăm pentru vizualizare, dar NU atingem istoricul.
+                result = run(frame_idx)
+                if result is None:
+                    raise PreventUpdate
+            else:
+                # Salt: procesăm cadrele omise (înainte) pentru a păstra continuitatea volumului.
+                for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
+                    inter = run(i)
+                    if inter:
+                        hist.accumulate(inter)
+                result = run(frame_idx)
+                if result is None:
+                    return None
+                hist.accumulate(result)
+        except ServerBusy:
+            # Alt cadru se proceseaza deja (lock ocupat). E o stare tranzitorie, nu o eroare:
+            # sarim peste acest update (la fel ca branch-urile consecutiv/acelasi cadru), in loc
+            # sa afisam "Eroare". Cererea care detine lock-ul va actualiza interfata.
+            raise PreventUpdate
 
         hist.last_frame_idx = frame_idx
         return result
