@@ -245,9 +245,9 @@ class NowcastingDashboard:
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = self._build_final_report(run_mode, frame_idx, len(nc_files))
 
-        # Doar fereastra de 15 min e calculata momentan; restul N/A pana la wiring complet.
+        m_15m, m_1h, m_3h, m_total = self._metric_windows(metrics)
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
-                metrics, "N/A", "N/A", "N/A", tracked, in_roi,
+                m_15m, m_1h, m_3h, m_total, tracked, in_roi,
                 lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km)
 
     # ---- update_dashboard helpers -----------------------------------------
@@ -387,6 +387,21 @@ class NowcastingDashboard:
         tracked = f"{result.num_tracked}"
         in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
         return hist_vol, curr_vol, pred_vol, max_rain, metrics_total, tracked, in_roi
+
+    # Siruri CSI/FAR/POD pe ferestre temporale: 15min = cadrul curent, 1h = 4 cadre,
+    # 3h = 12 cadre, total = tot istoricul. Cadrele sunt la 15 minute.
+    def _metric_windows(self, current_metrics: str) -> tuple[str, str, str, str]:
+        def fmt(w):
+            if w is None:
+                return "N/A"
+            csi, far, pod = w
+            return f"{csi:.2f} / {far:.2f} / {pod:.2f}"
+        return (
+            current_metrics,
+            fmt(self._history.window(4)),
+            fmt(self._history.window(12)),
+            fmt(self._history.window(None)),
+        )
 
     def _build_final_report(self, run_mode, frame_idx, n_files):
         if run_mode == "live" or frame_idx != n_files - 1:

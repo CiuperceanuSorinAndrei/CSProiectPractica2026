@@ -25,3 +25,11 @@ class FrameHistory:
         def avg(xs):
             return float(np.mean(xs)) if xs else 0.0
         return avg(self.csi), avg(self.far), avg(self.pod)
+
+    def window(self, n: int | None = None) -> tuple[float, float, float] | None:
+        """Media (csi, far, pod) pe ultimele n cadre inregistrate (toate daca n e None).
+        Returneaza None daca nu exista metrici inregistrate."""
+        if not self.csi:
+            return None
+        s = slice(-n, None) if n is not None else slice(None)
+        return float(np.mean(self.csi[s])), float(np.mean(self.far[s])), float(np.mean(self.pod[s]))
