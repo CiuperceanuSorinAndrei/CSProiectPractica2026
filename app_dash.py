@@ -40,9 +40,9 @@ data_service = CloudDataService(time_frames=[0, 15, 30, 45])
 historic_state = {
     "last_frame_idx": -1,
     "total_volume_m3": 0.0,
-    "csi": [],
-    "far": [],
-    "pod": [],
+    "csi": [], "far": [], "pod": [],
+    "centroid_err": [],
+    "predicted_vol": 0.0
 }
 
 
@@ -533,10 +533,12 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
         if result is None:
             raise PreventUpdate
         historic_state["total_volume_m3"] += result.roi_volume_m3
-        if result.global_csi is not None:
+        if result.global_csi:
             historic_state["csi"].append(result.global_csi)
             historic_state["far"].append(result.global_far)
             historic_state["pod"].append(result.global_pod)
+        historic_state["centroid_err"].append(result.mean_centroid_error)
+        historic_state["predicted_vol"] += result.predicted_roi_volume_m3
     elif is_same_frame:
         # Utilizatorul probabil a dat zoom sau a schimbat raza.
         # Reprocesam cadrul pentru vizualizare, dar NU modificam istoricul de volum sau metricile globale.
@@ -555,6 +557,8 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
                 if inter_result.global_csi is not None: historic_state["csi"].append(inter_result.global_csi)
                 if inter_result.global_far is not None: historic_state["far"].append(inter_result.global_far)
                 if inter_result.global_pod is not None: historic_state["pod"].append(inter_result.global_pod)
+                historic_state["centroid_err"].append(inter_result.mean_centroid_error)
+                historic_state["predicted_vol"] += inter_result.predicted_roi_volume_m3
 
         result = orch.process_frame(file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
         if result is None:
@@ -564,6 +568,8 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
         if result.global_csi is not None: historic_state["csi"].append(result.global_csi)
         if result.global_far is not None: historic_state["far"].append(result.global_far)
         if result.global_pod is not None: historic_state["pod"].append(result.global_pod)
+        historic_state["centroid_err"].append(result.mean_centroid_error)
+        historic_state["predicted_vol"] += result.predicted_roi_volume_m3
 
     historic_state["last_frame_idx"] = frame_idx
 
@@ -617,10 +623,11 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
     val_curr_vol = f"{result.roi_volume_m3 / 1000.0:.2f} mii m³"
     val_pred_vol = f"{result.predicted_roi_volume_m3 / 1000.0:.2f} mii m³"
     val_max_r = f"{result.max_rain:.2f}"
-    val_metrics = (
-        f"{result.global_csi:.2f} / {result.global_far:.2f} / {result.global_pod:.2f}"
-        if result.global_csi is not None else "N/A (Fără ploaie)"
-    )
+    if isinstance(result.global_csi, dict) and "15m" in result.global_csi:
+        c15, c1h = result.global_csi.get("15m", 0.0), result.global_csi.get("1h", 0.0)
+        val_metrics = f"15m: {c15:.2f} | 1h: {c1h:.2f}"
+    else:
+        val_metrics = "N/A (Fără istoric recent)"
     val_trck = f"{result.num_tracked}"
     val_in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
     lbl_frame = f"Cadru: {current_label} UTC ({frame_idx+1}/{len(nc_files)})"
@@ -628,9 +635,13 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
     final_report = ""
     # Raportul final doar in modul istoric cand a ajuns la capat
     if run_mode != "live" and frame_idx == len(nc_files) - 1:
-        avg_csi = np.mean(historic_state["csi"]) if historic_state["csi"] else 0.0
-        avg_far = np.mean(historic_state["far"]) if historic_state["far"] else 0.0
-        avg_pod = np.mean(historic_state["pod"]) if historic_state["pod"] else 0.0
+        if historic_state["csi"] and isinstance(historic_state["csi"][0], dict):
+            csi_15m = np.mean([d.get("15m", 0) for d in historic_state["csi"] if "15m" in d])
+            csi_1h = np.mean([d.get("1h", 0) for d in historic_state["csi"] if "1h" in d])
+        else:
+            csi_15m, csi_1h = 0.0, 0.0
+
+        avg_centr_err = np.mean(historic_state["centroid_err"]) if historic_state["centroid_err"] else 0.0
 
         final_report = dbc.Alert(
             [
@@ -638,10 +649,11 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
                 html.P("Raport de Performanță al Algoritmului pentru intervalul analizat:"),
                 html.Hr(),
                 dbc.Row([
-                    dbc.Col(html.Strong(f"Volum Total Precipitat (Bazin): {historic_state['total_volume_m3']/1000.0:.0f} mii m³")),
-                    dbc.Col(html.Strong(f"Acuratețe Detecție (CSI): {avg_csi:.2f}")),
-                    dbc.Col(html.Strong(f"Rată Alarme False (FAR): {avg_far:.2f}")),
-                    dbc.Col(html.Strong(f"Probabilitate Detecție (POD): {avg_pod:.2f}")),
+                    dbc.Col(html.Strong(f"Volum Total Precipitat: {historic_state['total_volume_m3']/1000.0:.0f} mii m³")),
+                    dbc.Col(html.Strong(f"Volum Total Anticipat: {historic_state['predicted_vol']/1000.0:.0f} mii m³")),
+                    dbc.Col(html.Strong(f"Acuratețe (CSI 15m): {csi_15m:.2f}")),
+                    dbc.Col(html.Strong(f"Acuratețe (CSI 1h): {csi_1h:.2f}")),
+                    dbc.Col(html.Strong(f"Eroare Medie Centroid: {avg_centr_err:.2f} px")),
                 ])
             ],
             color="success",
@@ -658,7 +670,12 @@ def update_dashboard(frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, r
 def handle_reset(n_clicks):
     if n_clicks:
         orch.reset_tracking()
-        historic_state.update({"last_frame_idx": -1, "total_volume_m3": 0.0, "csi": [], "far": [], "pod": []})
+        historic_state.update({
+            "last_frame_idx": -1, 
+            "total_volume_m3": 0.0, 
+            "csi": [], "far": [], "pod": [], 
+            "centroid_err": [], "predicted_vol": 0.0
+        })
         return 0
     return dash.no_update
 

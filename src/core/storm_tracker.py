@@ -161,7 +161,18 @@ class StormTracker:
 
                 obs_z = np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]])
 
-                if self.USE_ADAPTIVE_KALMAN and tracked_cell["prediction_error_pixels"] > 1.5:
+                max_y, max_x = rain_matrix.shape
+                cy, cx = c_cell["centroid_y"], c_cell["centroid_x"]
+                is_on_edge = (cy < 5) or (cy > max_y - 5) or (cx < 5) or (cx > max_x - 5)
+
+                if is_on_edge:
+                    kf_dict["CV"].R *= 100.0
+                    kf_dict["CA"].R *= 100.0
+                    kf_dict["CV"].update(obs_z)
+                    kf_dict["CA"].update(obs_z)
+                    kf_dict["CV"].R /= 100.0
+                    kf_dict["CA"].R /= 100.0
+                elif self.USE_ADAPTIVE_KALMAN and tracked_cell["prediction_error_pixels"] > 1.5:
                     # Incredere maxima in masuratoare pt a prinde virajul
                     kf_dict["CV"].R /= 10.0
                     kf_dict["CA"].R /= 10.0
@@ -221,7 +232,8 @@ class StormTracker:
                         c_cell["centroid_y"], c_cell["centroid_x"], pred_y, pred_x
                     )
                     
-                    if dist <= self._max_dist_pixels and dist < best_parent_dist:
+                    # Pentru OC-SORT Split, marim raza de cautare la 2.5x pentru pui (deoarece ei apar la marginea furtunii parinte)
+                    if dist <= (self._max_dist_pixels * 2.5) and dist < best_parent_dist:
                         best_parent_dist = dist
                         inherited_vx = self._kalman_bank[p_id][best_model].x[2, 0]
                         inherited_vy = self._kalman_bank[p_id][best_model].x[3, 0]
@@ -275,15 +287,24 @@ class StormTracker:
             scale_factor = float(np.clip(np.sqrt(predicted_area_trend), 0.97, 1.05))
             predicted_area_pixels = int(round(max(c_area, 1.0) * predicted_area_trend))
 
-            predicted_mask = self._predict_mask_shape(
-                coords, rain_matrix.shape,
-                tracked_cell["centroid_y"],
-                tracked_cell["centroid_x"],
-                shift_y, shift_x,
-                scale_factor,
-            )
+            predicted_masks = {}
+            for steps, name in [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]:
+                mask = self._predict_mask_shape(
+                    coords, rain_matrix,
+                    tracked_cell["centroid_y"],
+                    tracked_cell["centroid_x"],
+                    shift_y * steps, shift_x * steps,
+                    scale_factor ** steps,
+                )
+                if mask is not None:
+                    # Aplicam Thermodynamic Decay Factor (5% reducere a intensitatii la fiecare 15 min)
+                    # La 1 ora (4 steps), intensitatea scade cu ~18%. La 5 ore (20 steps) cu ~65%.
+                    decay_factor = 0.95 ** steps
+                    mask = mask * decay_factor
+                predicted_masks[name] = mask
 
-            tracked_cell["predicted_mask"] = predicted_mask
+            tracked_cell["predicted_masks"] = predicted_masks
+            tracked_cell["predicted_mask"] = predicted_masks["15m"]  # backward compatibility
             tracked_cell["predicted_area_pixels"] = predicted_area_pixels
             tracked_cell["size_error_pixels"] = abs(predicted_area_pixels - int(c_area))
             tracked_cell["size_error_percent"] = (
@@ -329,6 +350,16 @@ class StormTracker:
         """Calculeaza Intersection over Union de mii de ori mai rapid direct pe liste de coordonate."""
         if coords_a is None or coords_b is None or len(coords_a) == 0 or len(coords_b) == 0:
             return 0.0
+        arr_a = np.asarray(coords_a)
+        arr_b = np.asarray(coords_b)
+        
+        # AABB Pre-check
+        min_a, max_a = np.min(arr_a, axis=0), np.max(arr_a, axis=0)
+        min_b, max_b = np.min(arr_b, axis=0), np.max(arr_b, axis=0)
+        if (min_a[0] > max_b[0] or max_a[0] < min_b[0] or 
+            min_a[1] > max_b[1] or max_a[1] < min_b[1]):
+            return 0.0
+
         set_a = set(map(tuple, coords_a))
         set_b = set(map(tuple, coords_b))
         intersection = len(set_a.intersection(set_b))
@@ -340,16 +371,17 @@ class StormTracker:
     @staticmethod
     def _predict_mask_shape(
         coords: np.ndarray | None,
-        grid_shape: tuple[int, int],
+        rain_matrix: np.ndarray,
         center_y: float, center_x: float,
         shift_y: float, shift_x: float,
         scale_factor: float,
     ) -> np.ndarray | None:
-        """Prezice forma deformand doar Bounding Box-ul curent, salvand zeci de MB de memorie per celula."""
+        """Prezice forma deformand direct rain_matrix, salvand memorie si precizie."""
         if coords is None or len(coords) == 0:
             return None
 
-        h, w = grid_shape
+        h, w = rain_matrix.shape
+        grid_shape = (h, w)
         # Gasim Bounding Box-ul stramt
         min_y, max_y = np.min(coords[:, 0]), np.max(coords[:, 0])
         min_x, max_x = np.min(coords[:, 1]), np.max(coords[:, 1])
@@ -365,9 +397,9 @@ class StormTracker:
         if bb_h <= 0 or bb_w <= 0:
             return None
 
-        # Construim o masca DOAR pe Bounding Box
+        # Construim o masca locala cu valorile rain_rate reale
         local_mask = np.zeros((bb_h, bb_w), dtype=np.float32)
-        local_mask[coords[:, 0] - y0, coords[:, 1] - x0] = 1.0
+        local_mask[coords[:, 0] - y0, coords[:, 1] - x0] = rain_matrix[coords[:, 0], coords[:, 1]]
 
         if (bb_h, bb_w) not in _mgrid_cache:
             if len(_mgrid_cache) >= _MGRID_CACHE_MAXSIZE:
@@ -401,11 +433,10 @@ class StormTracker:
                 flags=cv2.INTER_LINEAR, borderValue=0,
             )
             
-        # Reasamblam masca prezisa pe full grid? 
-        # Nu, orchestrator-ul probabil are nevoie de masca intreaga pentru plot.
-        # Daca orchestrator-ul o deseneaza, se bazeaza pe dimensiunea rain_matrix!
-        full_mask = np.zeros(grid_shape, dtype=np.uint8)
-        full_mask[y0:y1, x0:x1] = (warped_local > 0.3).astype(np.uint8)
+        # Returnam direct valorile deformate (float32, adica rain_rate)
+        # in loc de uint8 binar
+        full_mask = np.zeros(grid_shape, dtype=np.float32)
+        full_mask[y0:y1, x0:x1] = warped_local
         return full_mask
 
     @staticmethod

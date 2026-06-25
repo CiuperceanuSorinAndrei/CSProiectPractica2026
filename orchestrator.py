@@ -12,6 +12,7 @@ from typing import Any
 import threading
 
 import numpy as np
+import scipy.sparse as sp
 
 from src.core.storm_cell_detector import StormCellDetector
 from src.core.storm_tracker import StormTracker
@@ -37,9 +38,9 @@ class FrameResult:
     num_tracked: int
     roi_volume_m3: float  # Volumul de precipitatii in ROI in metri cubi / ora
     predicted_roi_volume_m3: float  # Volumul prezis in ROI pentru cadrul urmator
-    global_csi: float | None
-    global_far: float | None
-    global_pod: float | None
+    global_csi: dict[str, float]
+    global_far: dict[str, float]
+    global_pod: dict[str, float]
 
 
 class Orchestrator:
@@ -49,13 +50,13 @@ class Orchestrator:
         self._detector = StormCellDetector(threshold=RAIN_THRESHOLD_MIN, min_size=2)
         self._tracker = StormTracker(max_dist_pixels=MAX_TRACKING_DISTANCE_PX)
         self._lock = threading.Lock()
-        self._previous_global_predicted_mask: Any = None
+        self._predictions_queue = []
 
     def reset_tracking(self) -> None:
         """Goleste complet starea de tracking (Kalman + masca globala prezisa)."""
         with self._lock:
             self._tracker.reset()
-            self._previous_global_predicted_mask = None
+            self._predictions_queue.clear()
 
     def process_frame(
         self,
@@ -126,27 +127,32 @@ class Orchestrator:
             # (roi_mask a fost deja calculat mai sus)
 
             # --- CALCUL METRICI GLOBALE (doar in ROI) ---
-            global_csi, global_far, global_pod = None, None, None
-            prev_global = self._previous_global_predicted_mask
-            if prev_global is not None and prev_global.shape == rain_rate.shape:
-                obs_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
-                pred_mask = prev_global & roi_mask
+            global_csi, global_far, global_pod = {}, {}, {}
+            obs_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
 
-                # Inregistram metrici doar daca exista activitate in ROI (ploaie observata sau prezisa)
-                if np.any(obs_mask) or np.any(pred_mask):
-                    global_csi = ForecastMetrics.csi(obs_mask, pred_mask)
-                    global_far = ForecastMetrics.far(obs_mask, pred_mask)
-                    global_pod = ForecastMetrics.pod(obs_mask, pred_mask)
+            # Evaluare multi-orizont (15m, 1h, 2h, 5h)
+            horizons = [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]
+            for steps_back, name in horizons:
+                if len(self._predictions_queue) >= steps_back:
+                    past_pred_sparse = self._predictions_queue[-steps_back].get(name)
+                    if past_pred_sparse is not None:
+                        past_pred = past_pred_sparse.toarray()
+                        if past_pred.shape == rain_rate.shape:
+                            pred_mask = (past_pred >= RAIN_THRESHOLD_MIN) & roi_mask
+                            if np.any(obs_mask) or np.any(pred_mask):
+                                global_csi[name] = ForecastMetrics.csi(obs_mask, pred_mask)
+                                global_far[name] = ForecastMetrics.far(obs_mask, pred_mask)
+                                global_pod[name] = ForecastMetrics.pod(obs_mask, pred_mask)
 
             # Aproximare aria unui pixel (~3km * 3km / cos(lat)). Folosim latitudinile grilei.
             pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
 
-            # 1 mm/h ploaie = 0.25 mm/15min = 250 m^3/km^2 acumulati in 15 minute
-            valid_rain_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
-            roi_volume_m3 = float(np.sum(rain_rate[valid_rain_mask] * pixel_area_km2[valid_rain_mask] * 250.0))
+            # Calculam volumul ACUMULAT din toate precipitațiile (inclusiv burnița de 0.1 mm/h)
+            roi_volume_m3 = float(np.sum(rain_rate[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
 
-            # Calcul Volum Prezis Acumulat in ROI pentru urmatoarele N cadre (Max 3 ore = 12 cadre)
-            MAX_FORECAST_FRAMES = 12
+            # Calcul Volum Prezis Acumulat in ROI pentru următorul pas (15 minute)
+            # Evităm supra-numărarea (multi-counting) evaluând strict T+15m
+            MAX_FORECAST_FRAMES = 1
             total_predicted_volume_m3 = 0.0
 
             for cell in tracked_cells:
@@ -203,14 +209,23 @@ class Orchestrator:
                             # Am iesit complet din ROI, n-are rost sa simulam restul pasilor din viitor
                             break
 
-            # Construim noua masca globala prezisa pentru T+1
-            new_global_pred_mask = np.zeros(rain_rate.shape, dtype=bool)
+            # Construim noile masti globale pentru T+N
+            new_global_preds = {"15m": np.zeros(rain_rate.shape, dtype=np.float32), 
+                                "1h": np.zeros(rain_rate.shape, dtype=np.float32),
+                                "2h": np.zeros(rain_rate.shape, dtype=np.float32),
+                                "5h": np.zeros(rain_rate.shape, dtype=np.float32)}
+                                
             for cell in tracked_cells:
-                if "predicted_mask" in cell and cell["predicted_mask"] is not None and cell.get("is_tracked", False):
-                    new_global_pred_mask |= cell["predicted_mask"].astype(bool)
+                if cell.get("is_tracked", False) and "predicted_masks" in cell:
+                    for name in new_global_preds.keys():
+                        if cell["predicted_masks"].get(name) is not None:
+                            new_global_preds[name] = np.maximum(new_global_preds[name], cell["predicted_masks"][name])
 
-            # Salvam starea globala pentru cadrul urmator
-            self._previous_global_predicted_mask = new_global_pred_mask
+            # Convertim in sparse matrix pentru a economisi memorie (salvam 95% RAM)
+            sparse_preds = {name: sp.csr_matrix(mask) for name, mask in new_global_preds.items()}
+            self._predictions_queue.append(sparse_preds)
+            if len(self._predictions_queue) > 25:
+                self._predictions_queue.pop(0)
 
             # Calcul metrici de eroare pe celulele urmarite
             valid_errors = [
