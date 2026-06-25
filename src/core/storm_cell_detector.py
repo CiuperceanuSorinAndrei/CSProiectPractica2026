@@ -34,8 +34,8 @@ class StormCellDetector:
         struct = np.ones((3, 3))
         large_mask = ndi.binary_opening(rain_matrix >= large_thr, structure=struct)
         
-        # Folosim Watershed pentru a separa celulele lipite in locul simplei etichetari
-        large_labels = self._watershed_segmentation(rain_matrix, large_mask)
+        # Etichetare simpla a componentelor conexe
+        large_labels = self._label_connected_components(rain_matrix, large_mask)
         cells = self._extract_components_from_labels(rain_matrix, large_labels, self._min_size)
 
         # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
@@ -47,7 +47,7 @@ class StormCellDetector:
 
         # Adaugam celulele mici care nu se suprapun
         small_mask = ndi.binary_opening(rain_matrix >= small_thr, structure=struct)
-        small_labels = self._watershed_segmentation(rain_matrix, small_mask)
+        small_labels = self._label_connected_components(rain_matrix, small_mask)
         small_cells = self._extract_components_from_labels(
             rain_matrix, small_labels, self._min_size, max_area=self._small_cell_max_area,
         )
@@ -65,8 +65,8 @@ class StormCellDetector:
         return cells
 
     @staticmethod
-    def _watershed_segmentation(rain_matrix: np.ndarray, base_mask: np.ndarray) -> np.ndarray:
-        """Aplica etichetarea componentelor. (Watershed a fost dezactivat temporar din cauza instabilitatii varfurilor)."""
+    def _label_connected_components(rain_matrix: np.ndarray, base_mask: np.ndarray) -> np.ndarray:
+        """Aplica etichetarea componentelor conexe (Connected Component Labeling)."""
         labels, _ = ndi.label(base_mask)
         return labels
 

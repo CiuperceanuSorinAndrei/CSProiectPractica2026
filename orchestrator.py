@@ -195,7 +195,9 @@ class Orchestrator:
                         if num_pixels_overlap > 0:
                             # Insumam strict aria pixelilor mutati care au cazut in ROI
                             area_overlap_km2 = np.sum(pixel_area_km2[val_y[in_roi], val_x[in_roi]])
-                            vol_step_m3 = float(area_overlap_km2 * mean_int * 250.0)
+                            # Aplicam factor de decadere (decay) pt volum: scade cu ~8% la fiecare cadru
+                            decay_factor = 0.92 ** step
+                            vol_step_m3 = float(area_overlap_km2 * mean_int * 250.0) * decay_factor
                             total_predicted_volume_m3 += vol_step_m3
                         elif step > 1 and total_predicted_volume_m3 > 0:
                             # Am iesit complet din ROI, n-are rost sa simulam restul pasilor din viitor
@@ -204,7 +206,7 @@ class Orchestrator:
             # Construim noua masca globala prezisa pentru T+1
             new_global_pred_mask = np.zeros(rain_rate.shape, dtype=bool)
             for cell in tracked_cells:
-                if "predicted_mask" in cell and cell.get("is_tracked", False):
+                if "predicted_mask" in cell and cell["predicted_mask"] is not None and cell.get("is_tracked", False):
                     new_global_pred_mask |= cell["predicted_mask"].astype(bool)
 
             # Salvam starea globala pentru cadrul urmator

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 import cv2
@@ -9,7 +10,8 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 from scipy.optimize import linear_sum_assignment
 
-_mgrid_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+_MGRID_CACHE_MAXSIZE = 20
+_mgrid_cache: OrderedDict[tuple, tuple[np.ndarray, np.ndarray]] = OrderedDict()
 
 
 class StormTracker:
@@ -43,9 +45,10 @@ class StormTracker:
         # 1. Optical flow global
         flow = self._compute_optical_flow(self._previous_rain_matrix, rain_matrix)
 
-        # 2. Kalman predict
-        for kf in self._kalman_bank.values():
-            kf.predict()
+        # 2. Kalman predict (pentru ambele modele)
+        for kf_dict in self._kalman_bank.values():
+            kf_dict["CV"].predict()
+            kf_dict["CA"].predict()
 
         # Pregatim celulele curente (calcul volum, etc.)
         for c_cell in current_cells:
@@ -76,8 +79,10 @@ class StormTracker:
                 if p_id not in self._kalman_bank:
                     continue
                     
-                pred_x = self._kalman_bank[p_id].x[0, 0]
-                pred_y = self._kalman_bank[p_id].x[1, 0]
+                # Pentru calculul de cost (distanta), folosim predictia modelului "best" curent
+                best_model = self._kalman_bank[p_id]["best"]
+                pred_x = self._kalman_bank[p_id][best_model].x[0, 0]
+                pred_y = self._kalman_bank[p_id][best_model].x[1, 0]
                 radius_limit = max(
                     self._max_dist_pixels,
                     self._adaptive_match_radius(p_cell.get("area_pixels", p_cell.get("area", 1.0))),
@@ -147,19 +152,31 @@ class StormTracker:
                 else:
                     tracked_cell["area_trend"] = base_trend
 
-                kf = self._kalman_bank[cell_id]
-                pred_x_prior, pred_y_prior = kf.x[0, 0], kf.x[1, 0]
+                kf_dict = self._kalman_bank[cell_id]
+                best_model = kf_dict["best"]
+                pred_x_prior, pred_y_prior = kf_dict[best_model].x[0, 0], kf_dict[best_model].x[1, 0]
                 tracked_cell["prediction_error_pixels"] = self._calculate_distance(
                     c_cell["centroid_y"], c_cell["centroid_x"], pred_y_prior, pred_x_prior,
                 )
 
+                obs_z = np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]])
+
                 if self.USE_ADAPTIVE_KALMAN and tracked_cell["prediction_error_pixels"] > 1.5:
-                    # Incredere maxima in masuratoare, ignoram predictia pt a prinde curba
-                    kf.R /= 10.0
-                    kf.update(np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]]))
-                    kf.R *= 10.0
+                    # Incredere maxima in masuratoare pt a prinde virajul
+                    kf_dict["CV"].R /= 10.0
+                    kf_dict["CA"].R /= 10.0
+                    kf_dict["CV"].update(obs_z)
+                    kf_dict["CA"].update(obs_z)
+                    kf_dict["CV"].R *= 10.0
+                    kf_dict["CA"].R *= 10.0
                 else:
-                    kf.update(np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]]))
+                    kf_dict["CV"].update(obs_z)
+                    kf_dict["CA"].update(obs_z)
+
+                # Switching: Alegem modelul care a avut eroarea (residual y) mai mica
+                err_cv = np.linalg.norm(kf_dict["CV"].y)
+                err_ca = np.linalg.norm(kf_dict["CA"].y)
+                kf_dict["best"] = "CV" if err_cv <= err_ca else "CA"
                 tracked_cell["centroid_history"].append((float(c_cell["centroid_y"]), float(c_cell["centroid_x"])))
                 tracked_cell["centroid_history"] = tracked_cell["centroid_history"][-6:]
                 tracked_cell["area_history"].append(int(c_area))
@@ -172,7 +189,7 @@ class StormTracker:
                 tracked_cell["cell_history"] = tracked_cell["cell_history"][-6:]
                 active_ids.add(cell_id)
             else:
-                # Celula noua
+                # Celula noua sau SPLIT
                 cell_id = str(uuid.uuid4())[:8]
                 tracked_cell["cell_id"] = cell_id
                 tracked_cell["prediction_error_pixels"] = 0.0
@@ -186,13 +203,41 @@ class StormTracker:
                 }]
                 tracked_cell["area_trend"] = 1.0
 
+                # --- PASS 2: Detectare SPLIT ---
+                # Cautam daca "orfanul" a aparut in perimetrul unei celule trecute
+                best_parent_dist = 1000.0
+                inherited_vy, inherited_vx = 0.0, 0.0
+                
+                for p_cell in self._previous_cells:
+                    p_id = p_cell.get("cell_id")
+                    if p_id not in self._kalman_bank:
+                        continue
+                        
+                    best_model = self._kalman_bank[p_id]["best"]
+                    pred_x = self._kalman_bank[p_id][best_model].x[0, 0]
+                    pred_y = self._kalman_bank[p_id][best_model].x[1, 0]
+                    
+                    dist = self._calculate_distance(
+                        c_cell["centroid_y"], c_cell["centroid_x"], pred_y, pred_x
+                    )
+                    
+                    if dist <= self._max_dist_pixels and dist < best_parent_dist:
+                        best_parent_dist = dist
+                        inherited_vx = self._kalman_bank[p_id][best_model].x[2, 0]
+                        inherited_vy = self._kalman_bank[p_id][best_model].x[3, 0]
+
+                # Initializam cu viteza mostenita (daca e 0.0, 0.0 inseamna nastere normala)
                 self._kalman_bank[cell_id] = self._instantiate_kalman_filter(
                     c_cell["centroid_y"], c_cell["centroid_x"],
+                    inherited_vy, inherited_vx
                 )
                 active_ids.add(cell_id)
 
             # --- Viteza din Kalman + observatii ---
-            current_kf = self._kalman_bank[cell_id]
+            kf_dict = self._kalman_bank[cell_id]
+            best_model = kf_dict["best"]
+            current_kf = kf_dict[best_model]
+            
             tracked_cell["v_x"] = current_kf.x[2, 0]
             tracked_cell["v_y"] = current_kf.x[3, 0]
 
@@ -205,6 +250,7 @@ class StormTracker:
                 obs_v_y = float(np.mean(deltas_y[-3:]))
                 tracked_cell["v_x"] = 0.4 * tracked_cell["v_x"] + 0.6 * obs_v_x
                 tracked_cell["v_y"] = 0.4 * tracked_cell["v_y"] + 0.6 * obs_v_y
+                # Sincronizam inapoi viteza observata doar in modelul curent ales
                 current_kf.x[2, 0] = tracked_cell["v_x"]
                 current_kf.x[3, 0] = tracked_cell["v_y"]
 
@@ -324,7 +370,12 @@ class StormTracker:
         local_mask[coords[:, 0] - y0, coords[:, 1] - x0] = 1.0
 
         if (bb_h, bb_w) not in _mgrid_cache:
+            if len(_mgrid_cache) >= _MGRID_CACHE_MAXSIZE:
+                _mgrid_cache.popitem(last=False)
             _mgrid_cache[(bb_h, bb_w)] = np.mgrid[0:bb_h, 0:bb_w].astype(np.float32)
+        else:
+            _mgrid_cache.move_to_end((bb_h, bb_w))
+
         y_coords, x_coords = _mgrid_cache[(bb_h, bb_w)]
         
         map_x = (x_coords - shift_x).astype(np.float32)
@@ -358,15 +409,34 @@ class StormTracker:
         return full_mask
 
     @staticmethod
-    def _instantiate_kalman_filter(initial_y: float, initial_x: float) -> KalmanFilter:
-        kf = KalmanFilter(dim_x=4, dim_z=2)
-        kf.x = np.array([[initial_x], [initial_y], [0.0], [0.0]])
-        kf.F = np.array([[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
-        kf.H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
-        kf.P *= 1.2
-        kf.Q = np.array([[0.005, 0.0, 0.0, 0.0], [0.0, 0.005, 0.0, 0.0], [0.0, 0.0, 0.02, 0.0], [0.0, 0.0, 0.0, 0.02]])
-        kf.R = np.array([[10.0, 0.0], [0.0, 10.0]])
-        return kf
+    def _instantiate_kalman_filter(
+        initial_y: float, initial_x: float,
+        initial_vy: float = 0.0, initial_vx: float = 0.0
+    ) -> dict[str, Any]:
+        kf_cv = KalmanFilter(dim_x=4, dim_z=2)
+        kf_cv.x = np.array([[initial_x], [initial_y], [initial_vx], [initial_vy]])
+        kf_cv.F = np.array([[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        kf_cv.H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+        kf_cv.P *= 1.2
+        kf_cv.Q = np.array([[0.005, 0.0, 0.0, 0.0], [0.0, 0.005, 0.0, 0.0], [0.0, 0.0, 0.02, 0.0], [0.0, 0.0, 0.0, 0.02]])
+        kf_cv.R = np.array([[10.0, 0.0], [0.0, 10.0]])
+
+        kf_ca = KalmanFilter(dim_x=6, dim_z=2)
+        kf_ca.x = np.array([[initial_x], [initial_y], [initial_vx], [initial_vy], [0.0], [0.0]])
+        kf_ca.F = np.array([
+            [1., 0., 1., 0., 0.5, 0. ],
+            [0., 1., 0., 1., 0.,  0.5],
+            [0., 0., 1., 0., 1.,  0. ],
+            [0., 0., 0., 1., 0.,  1. ],
+            [0., 0., 0., 0., 1.,  0. ],
+            [0., 0., 0., 0., 0.,  1. ]
+        ])
+        kf_ca.H = np.array([[1., 0., 0., 0., 0., 0.], [0., 1., 0., 0., 0., 0.]])
+        kf_ca.P *= 1.2
+        kf_ca.Q = np.eye(6) * 0.01
+        kf_ca.R = np.array([[10.0, 0.0], [0.0, 10.0]])
+
+        return {"CV": kf_cv, "CA": kf_ca, "best": "CV"}
 
     @staticmethod
     def translate_mask(mask: np.ndarray, shift_y: float, shift_x: float) -> np.ndarray:
