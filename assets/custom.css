@@ -1,95 +1,164 @@
 /* =============================================================================
-   TEMA DASHBOARD — schimba culorile dintr-un singur loc.
-   Valorile implicite reproduc tema DARKLY curenta (nimic nu se schimba vizual).
-   Editeaza variabilele din :root de mai jos pentru a re-colora tot dashboard-ul.
-   NB: culorile hartii (matplotlib/cartopy) sunt randate in Python si NU sunt
-   controlate de aici — vezi src/ui_helpers/plotting.py.
+   TEMA DASHBOARD — ~10 culori. Schimba doar variabilele din :root de mai jos.
+   Valorile -rgb sunt triplete "R, G, B" (cerute de utilitatile Bootstrap).
+   Valorile implicite reproduc tema DARKLY (nimic nu se schimba vizual).
+   NB: culorile hartii (matplotlib/cartopy) sunt in Python — src/ui_helpers/plotting.py.
    ============================================================================= */
 :root {
-    /* ---- Fundaluri ---- */
-    --c-bg-rgb: 48, 48, 48;          /* panouri (bg-dark) = #303030 */
-    --c-bg: rgb(var(--c-bg-rgb));
-    --c-page-bg: #222222;            /* fundalul paginii (body) */
-    --c-surface: #343a40;            /* inputs, tooltip slider */
-    --c-calendar-bg: #222222;        /* popup calendar */
-    --c-calendar-cell: #333333;      /* zilele din calendar */
-    --c-calendar-hover: #555555;
-    --c-calendar-line: #444444;
-
-    /* ---- Text ---- */
-    --c-text-rgb: 173, 181, 189;     /* text-light = #adb5bd */
+    --c-bg: #222222;                 /* fundal cel mai inchis: pagina + popup calendar */
+    --c-surface-rgb: 48, 48, 48;     /* panouri / carduri (bg-dark) = #303030 */
+    --c-surface: rgb(var(--c-surface-rgb));
+    --c-surface-2: #343a40;          /* suprafete interactive: inputs, celule calendar, tooltip */
+    --c-border: #6c757d;             /* toate liniile: borduri, hr, scrollbar, grila calendar */
+    --c-text-rgb: 173, 181, 189;     /* text general (text-light) = #adb5bd */
     --c-text: rgb(var(--c-text-rgb));
-    --c-text-strong: #f8f9fa;        /* text accentuat (inputs, calendar) */
-    --c-text-muted: rgba(222, 226, 230, 0.75);
-    --c-body-text: #dee2e6;          /* text implicit pagina */
+    --c-text-muted: rgba(var(--c-text-rgb), 0.6);
+    --c-text-strong: #f8f9fa;        /* text accentuat: inputs, titluri pe fundal inchis */
+    --c-info-rgb: 52, 152, 219;      /* accent info (titlu, carduri info) = #3498db */
+    --c-success-rgb: 0, 188, 140;    /* success = #00bc8c (Play, raport final) */
+    --c-danger-rgb: 231, 76, 60;     /* danger = #e74c3c (Reset, avertismente) */
+    --c-primary-rgb: 55, 90, 127;    /* primary = #375a7f (radio, zi selectata calendar) */
 
-    /* ---- Linii / borduri ---- */
-    --c-border: #6c757d;             /* borduri inputs/carduri, hr, linii */
-    --c-scroll-thumb: #495057;
-
-    /* ---- Accente (semantic) ---- */
-    --c-info-rgb: 52, 152, 219;      /* info (titlu, carduri info) = #3498db */
-    --c-success-rgb: 0, 188, 140;    /* success = #00bc8c */
-    --c-danger-rgb: 231, 76, 60;     /* danger = #e74c3c */
-    --c-primary-rgb: 55, 90, 127;    /* primary = #375a7f */
-    --c-spinner: #0dcaf0;            /* spinner download (prop in Python) */
-    --c-cal-selected: #0d6efd;       /* zi selectata in calendar */
-    --c-cal-selected-span: #0a58ca;  /* interval selectat in calendar */
-
-    /* ---- Mapare catre Bootstrap (utilitati bg-*, text-*, border-*) ---- */
-    --bs-dark-rgb: var(--c-bg-rgb);
+    /* ----- Mapare catre Bootstrap (utilitati + componente) ----- */
+    --bs-dark-rgb: var(--c-surface-rgb);
     --bs-light-rgb: var(--c-text-rgb);
     --bs-info-rgb: var(--c-info-rgb);
     --bs-success-rgb: var(--c-success-rgb);
     --bs-danger-rgb: var(--c-danger-rgb);
     --bs-primary-rgb: var(--c-primary-rgb);
-    --bs-body-bg: var(--c-page-bg);
-    --bs-body-color: var(--c-body-text);
+    --bs-dark: var(--c-surface);
+    --bs-light: var(--c-text);
+    --bs-info: rgb(var(--c-info-rgb));
+    --bs-success: rgb(var(--c-success-rgb));
+    --bs-danger: rgb(var(--c-danger-rgb));
+    --bs-primary: rgb(var(--c-primary-rgb));
+    --bs-body-bg: var(--c-bg);
+    --bs-body-color: var(--c-text);
     --bs-border-color: var(--c-border);
-    --bs-border-color-translucent: rgba(108, 117, 125, 0.6);
-    --bs-secondary-color: var(--c-text-muted);   /* text-muted */
+    --bs-border-color-translucent: rgba(var(--c-text-rgb), 0.3);
+    --bs-secondary-color: var(--c-text-muted);
 }
 
 
 /* =============================================================================
-   Reguli pentru componentele native Dash (folosesc variabilele de mai sus)
+   Componente native Dash (slider, DatePicker, calendar)
    ============================================================================= */
 
-/* Ascundem complet orice input asociat slider-ului (feature nativ din Dash) */
+/* Ascundem inputurile si marcajele native ale slider-ului */
 .dash-input-container, .dash-range-slider-input, .dash-range-slider-max-input { display: none !important; }
-
-/* Ascundem complet marcajele numerice de sub slider */
 .dash-slider-mark, .rc-slider-mark, .rc-slider-mark-text { display: none !important; }
 
-.rc-slider-tooltip-inner { background-color: var(--c-surface) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; box-shadow: none !important; }
+.rc-slider-tooltip-inner { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; box-shadow: none !important; }
 
-/* DatePickerRange Text Inputs */
-.DateInput, .DateInput_1 { background-color: var(--c-surface) !important; }
-.DateInput_input, .DateInput_input_1, input.DateInput_input { background-color: var(--c-surface) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
-.DateRangePickerInput, .DateRangePickerInput_1 { background-color: var(--c-surface) !important; border: 1px solid var(--c-border) !important; border-radius: 4px; overflow: hidden; }
-.DateRangePickerInput_arrow, .DateRangePickerInput_arrow_1 { background-color: var(--c-surface) !important; }
+/* Slider "Control Timp" — Dash 3+ design-tokens. Tokenul de brand
+   --Dash-Fill-Interactive-Strong (mov #7f4bc4) coloreaza umplutura, manerul si
+   outline-ul de focus; il rutam global catre accent + suprascriem direct elementele.
+   Clase: dash-slider-range = umplutura, dash-slider-track = sina, dash-slider-thumb = maner. */
+:root { --Dash-Fill-Interactive-Strong: rgb(var(--c-info-rgb)); }
+.dash-slider-range { background: rgb(var(--c-info-rgb)) !important; }
+.dash-slider-track { background: var(--c-border) !important; }
+.dash-slider-thumb {
+    background-color: var(--c-text-strong) !important;
+    border-color: rgb(var(--c-info-rgb)) !important;
+}
+.dash-slider-thumb:focus { outline-color: rgb(var(--c-info-rgb)) !important; }
+.dash-slider-thumb:hover, .dash-slider-thumb:focus {
+    box-shadow: 0 0 0 5px rgba(var(--c-info-rgb), 0.3) !important;
+}
+
+/* DatePickerRange — inputuri */
+.DateInput, .DateInput_1 { background-color: var(--c-surface-2) !important; }
+.DateInput_input, .DateInput_input_1, input.DateInput_input { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+.DateRangePickerInput, .DateRangePickerInput_1 { background-color: var(--c-surface-2) !important; border: 1px solid var(--c-border) !important; border-radius: 4px; overflow: hidden; }
+.DateRangePickerInput_arrow, .DateRangePickerInput_arrow_1 { background-color: var(--c-surface-2) !important; }
 .DateRangePickerInput_arrow_svg { fill: var(--c-text-strong) !important; }
 
-/* DatePickerRange Popup Calendar */
-.DayPicker, .DayPicker_1 { background-color: var(--c-calendar-bg) !important; }
-.CalendarMonth, .CalendarMonth_1, .CalendarMonthGrid, .CalendarMonthGrid_1 { background-color: var(--c-calendar-bg) !important; }
+/* DatePickerRange — popup calendar */
+.DayPicker, .DayPicker_1 { background-color: var(--c-bg) !important; }
+.CalendarMonth, .CalendarMonth_1, .CalendarMonthGrid, .CalendarMonthGrid_1 { background-color: var(--c-bg) !important; }
 .CalendarMonth_caption, .CalendarMonth_caption_1 { color: var(--c-text-strong) !important; }
-.DayPickerNavigation_button__default, .DayPickerNavigation_button__default_1 { background-color: var(--c-calendar-cell) !important; }
+.DayPickerNavigation_button__default, .DayPickerNavigation_button__default_1 { background-color: var(--c-surface-2) !important; }
 .DayPickerNavigation_svg__default { fill: var(--c-text-strong) !important; }
 .DayPickerKeyboardShortcuts_buttonReset { display: none !important; }
-.CalendarDay__default, .CalendarDay__default_1 { background-color: var(--c-calendar-cell) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-calendar-line) !important; }
-.CalendarDay__default:hover { background-color: var(--c-calendar-hover) !important; }
-.CalendarDay__selected, .CalendarDay__selected_1 { background-color: var(--c-cal-selected) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-cal-selected) !important; }
-.CalendarDay__selected_span, .CalendarDay__selected_span_1 { background-color: var(--c-cal-selected-span) !important; color: var(--c-text-strong) !important; }
-.CalendarDay__hovered_span, .CalendarDay__hovered_span_1 { background-color: var(--c-calendar-line) !important; color: var(--c-text-strong) !important; }
+.CalendarDay__default, .CalendarDay__default_1 { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+.CalendarDay__default:hover { background-color: var(--c-border) !important; }
+.CalendarDay__selected, .CalendarDay__selected_1 { background-color: rgb(var(--c-primary-rgb)) !important; color: var(--c-text-strong) !important; border: 1px solid rgb(var(--c-primary-rgb)) !important; }
+.CalendarDay__selected_span, .CalendarDay__selected_span_1 { background-color: rgba(var(--c-primary-rgb), 0.6) !important; color: var(--c-text-strong) !important; }
+.CalendarDay__hovered_span, .CalendarDay__hovered_span_1 { background-color: var(--c-border) !important; color: var(--c-text-strong) !important; }
 
-/* Sidebar fix: ramane lipit de marginea ferestrei la scroll, cu scroll intern propriu */
+
+/* =============================================================================
+   Layout: sidebar fix + borduri/linii
+   ============================================================================= */
 .app-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .app-sidebar::-webkit-scrollbar { width: 8px; }
-.app-sidebar::-webkit-scrollbar-track { background: var(--c-page-bg); }
-.app-sidebar::-webkit-scrollbar-thumb { background: var(--c-scroll-thumb); border-radius: 4px; }
+.app-sidebar::-webkit-scrollbar-track { background: var(--c-bg); }
+.app-sidebar::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 4px; }
 
-/* Borduri si linii mai vizibile pe fundalul intunecat */
 .border-secondary { border-color: var(--c-border) !important; }
 .table-dark { --bs-table-border-color: var(--c-border); }
 hr { border-color: var(--c-border) !important; opacity: 0.5 !important; }
+
+
+/* =============================================================================
+   Componente Bootstrap (butoane, alerte, radio) rutate prin variabilele temei.
+   ============================================================================= */
+
+/* Buton outline SUCCESS (Play) */
+.btn-outline-success {
+    --bs-btn-color: rgb(var(--c-success-rgb));
+    --bs-btn-border-color: rgb(var(--c-success-rgb));
+    --bs-btn-hover-bg: rgb(var(--c-success-rgb));
+    --bs-btn-hover-border-color: rgb(var(--c-success-rgb));
+    --bs-btn-active-bg: rgb(var(--c-success-rgb));
+    --bs-btn-active-border-color: rgb(var(--c-success-rgb));
+    --bs-btn-disabled-color: rgb(var(--c-success-rgb));
+    --bs-btn-disabled-border-color: rgb(var(--c-success-rgb));
+    --bs-btn-focus-shadow-rgb: var(--c-success-rgb);
+}
+
+/* Buton outline DANGER (Reset) */
+.btn-outline-danger {
+    --bs-btn-color: rgb(var(--c-danger-rgb));
+    --bs-btn-border-color: rgb(var(--c-danger-rgb));
+    --bs-btn-hover-bg: rgb(var(--c-danger-rgb));
+    --bs-btn-hover-border-color: rgb(var(--c-danger-rgb));
+    --bs-btn-active-bg: rgb(var(--c-danger-rgb));
+    --bs-btn-active-border-color: rgb(var(--c-danger-rgb));
+    --bs-btn-disabled-color: rgb(var(--c-danger-rgb));
+    --bs-btn-disabled-border-color: rgb(var(--c-danger-rgb));
+    --bs-btn-focus-shadow-rgb: var(--c-danger-rgb);
+}
+
+/* Buton outline LIGHT (Descarca) */
+.btn-outline-light {
+    --bs-btn-color: var(--c-text);
+    --bs-btn-border-color: var(--c-text);
+    --bs-btn-hover-bg: var(--c-text);
+    --bs-btn-hover-border-color: var(--c-text);
+    --bs-btn-active-bg: var(--c-text);
+    --bs-btn-active-border-color: var(--c-text);
+    --bs-btn-disabled-color: var(--c-text);
+    --bs-btn-disabled-border-color: var(--c-text);
+    --bs-btn-focus-shadow-rgb: var(--c-text-rgb);
+}
+
+/* Alerte: avertismente (danger) + raport final (success) */
+.alert-success {
+    --bs-alert-color: var(--c-text-strong);
+    --bs-alert-bg: rgba(var(--c-success-rgb), 0.18);
+    --bs-alert-border-color: rgba(var(--c-success-rgb), 0.6);
+    --bs-alert-link-color: var(--c-text-strong);
+}
+.alert-danger {
+    --bs-alert-color: var(--c-text-strong);
+    --bs-alert-bg: rgba(var(--c-danger-rgb), 0.18);
+    --bs-alert-border-color: rgba(var(--c-danger-rgb), 0.6);
+    --bs-alert-link-color: var(--c-text-strong);
+}
+
+/* Radio "Mod de Rulare" — starea selectata */
+.form-check-input:checked {
+    background-color: rgb(var(--c-primary-rgb)) !important;
+    border-color: rgb(var(--c-primary-rgb)) !important;
+}
