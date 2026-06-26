@@ -44,6 +44,9 @@ class NowcastingDashboard:
             __name__,
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
+            # Nu inlocui titlul cu "Updating..." la fiecare callback: altfel poll-ul de progres
+            # al warm-up-ului (la fiecare secunda) face titlul sa palpaie continuu.
+            update_title=None,
         )
         self.app.title = "Estimarea volumului de precipitatii"
         self.app.layout = DashboardLayout(self._store).build()
@@ -153,6 +156,11 @@ class NowcastingDashboard:
             prevent_initial_call=True,
         )(self._handle_reset)
 
+        app.callback(
+            Output("warmup-status", "children"),
+            Input("warmup-poll", "n_intervals"),
+        )(self._update_warmup_status)
+
     # ---- simple callbacks --------------------------------------------------
     @staticmethod
     def _toggle_manual_coords(loc):
@@ -194,6 +202,13 @@ class NowcastingDashboard:
             self._history.reset()
             return 0
         return dash.no_update
+
+    def _update_warmup_status(self, _n):
+        """Afiseaza progresul pre-incarcarii in fundal; gol cand nu ruleaza / s-a terminat."""
+        done, total = self._orch.warm_status()
+        if total <= 0 or done >= total:
+            return ""
+        return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
 
     def _download_historic(self, n, start_d, end_d, start_h, end_h):
         if not start_d or not end_d:
@@ -237,6 +252,18 @@ class NowcastingDashboard:
         result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km)
         if result is None:
             return self._error_response(label)
+
+        # Cadrul curent a stabilit geometria; pre-incarcam restul intervalului in fundal (doar
+        # istoric) ca salturile reci ulterioare sa devina rapide. Idempotent + cedeaza prioritate.
+        if run_mode == "live":
+            self._orch.stop_warmup()
+        else:
+            lon_min, lon_max, lat_min, lat_max = bbox
+            center_lat, center_lon = center
+            self._orch.start_warmup(
+                [self._store.path(f) for f in nc_files],
+                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
+            )
 
         title = f"🔴 LIVE NOWCAST: {label} UTC" if run_mode == "live" else f"{label} UTC"
         src = self._render_map(result, bbox, center, radius_km, title)

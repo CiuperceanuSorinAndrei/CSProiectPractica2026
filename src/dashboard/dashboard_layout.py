@@ -141,6 +141,7 @@ class DashboardLayout:
                 dbc.Col(dbc.Button("Play/Pauză", id="btn-play", color="success", outline=True, className="w-100 fw-bold")),
                 dbc.Col(dbc.Button("Reset", id="btn-reset", color="danger", outline=True, className="w-100 fw-bold")),
             ]),
+            html.Small(id="warmup-status", className="text-info d-block mt-2", style={"minHeight": "1.2rem"}),
         ]
 
     @staticmethod
@@ -150,6 +151,7 @@ class DashboardLayout:
             dcc.Store(id="is-processing", data=False),
             dcc.Store(id="active-time-range", data=DEFAULT_TIME_RANGE),
             dcc.Interval(id="live-polling-interval", interval=15 * 60 * 1000, n_intervals=0, disabled=True),
+            dcc.Interval(id="warmup-poll", interval=1000, n_intervals=0),
         ]
 
     # ---- content -----------------------------------------------------------
