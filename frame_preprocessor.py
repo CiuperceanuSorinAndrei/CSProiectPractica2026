@@ -19,7 +19,7 @@ import netCDF4
 
 from src.geo.projection import GeoProjection
 from src.core.storm_cell_detector import StormCellDetector
-from config import RAIN_THRESHOLD_MIN
+from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
 
 @dataclass
@@ -44,7 +44,7 @@ class FramePrep:
 
 
 # Detector stateless, reutilizat pentru toate cadrele.
-_detector = StormCellDetector(threshold=RAIN_THRESHOLD_MIN, min_size=2)
+_detector = StormCellDetector(threshold=RAIN_THRESHOLD_TRACKING, min_size=2)
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:

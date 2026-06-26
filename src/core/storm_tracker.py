@@ -157,6 +157,7 @@ class StormTracker:
             tracked_cell["a_y"] = kf_current.a_y
             tracked_cell["predicted_area_kalman"] = max(1.0, kf_current.area)
             tracked_cell["d_area_kalman"] = kf_current.d_area
+            tracked_cell["dd_area_kalman"] = kf_current.dd_area
 
             predicted_centroid_x = tracked_cell["centroid_x"] + tracked_cell["v_x"]
             predicted_centroid_y = tracked_cell["centroid_y"] + tracked_cell["v_y"]

@@ -11,7 +11,11 @@ class FrameHistory:
         self.total_volume_m3 = 0.0
         self.frames_processed = 0
         
-        # Volum acumulat estimat pe mai multe orizonturi
+        # Stocam istoricul valorilor instantanee
+        self.true_volumes = []
+        self.pred_volumes = {"30m": [], "1h": [], "2h": []}
+        
+        # Volum acumulat estimat pe mai multe orizonturi (legacy, pentru afisare rapida)
         self.predicted_volume_accumulation = {"30m": 0.0, "1h": 0.0, "2h": 0.0}
         
         # Metric history (CSI, FAR, POD, FSS)
@@ -26,14 +30,14 @@ class FrameHistory:
         self.total_volume_m3 += result.roi_volume_m3
         self.frames_processed += 1
         
-        # Insumam volumele prezise la fiecare cadru, normalizate la 1 pas (15m) pt a fi comparabile
-        horizon_steps = {"30m": 2, "1h": 4, "2h": 8}
-        if result.predicted_volumes_horizons:
+        self.true_volumes.append(result.roi_volume_m3)
+        
+        if hasattr(result, "instant_predicted_volumes") and result.instant_predicted_volumes:
             for horizon in ["30m", "1h", "2h"]:
-                val = result.predicted_volumes_horizons.get(horizon, 0.0)
-                steps = horizon_steps.get(horizon, 1)
-                self.predicted_volume_accumulation[horizon] += val / steps
-
+                val = result.instant_predicted_volumes.get(horizon, 0.0)
+                self.predicted_volume_accumulation[horizon] += val
+                self.pred_volumes[horizon].append(val)
+                
         # Adaugam metricile pentru a putea face mediile
         if result.global_csi:
             self.metrics_history["csi"].append(result.global_csi.copy())

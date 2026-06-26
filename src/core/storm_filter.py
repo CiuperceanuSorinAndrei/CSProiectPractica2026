@@ -18,47 +18,49 @@ class StormFilter:
         initial_vy: float = 0.0, initial_vx: float = 0.0,
         initial_area: float = 1.0, initial_d_area: float = 0.0
     ):
-        self._kf = KalmanFilter(dim_x=8, dim_z=3)
+        self._kf = KalmanFilter(dim_x=9, dim_z=3)
         
-        # State: [x, y, vx, vy, ax, ay, area, d_area]
+        # State: [x, y, vx, vy, ax, ay, area, d_area, dd_area]
         self._kf.x = np.array([
             [initial_x], [initial_y],
             [initial_vx], [initial_vy],
             [0.0], [0.0],  # ax, ay
-            [initial_area], [initial_d_area]
+            [initial_area], [initial_d_area],
+            [0.0]  # dd_area
         ])
         
         dt = 1.0  # timp arbitrar = 1 frame
         
         # Transition Matrix (F)
-        # x = x + vx*dt + 0.5*ax*dt^2
         self._kf.F = np.array([
-            [1.0, 0.0,  dt, 0.0, 0.5*dt**2, 0.0,       0.0, 0.0], # x
-            [0.0, 1.0, 0.0,  dt, 0.0,       0.5*dt**2, 0.0, 0.0], # y
-            [0.0, 0.0, 1.0, 0.0,  dt,       0.0,       0.0, 0.0], # vx
-            [0.0, 0.0, 0.0, 1.0, 0.0,        dt,       0.0, 0.0], # vy
-            [0.0, 0.0, 0.0, 0.0, 1.0,       0.0,       0.0, 0.0], # ax
-            [0.0, 0.0, 0.0, 0.0, 0.0,       1.0,       0.0, 0.0], # ay
-            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       1.0,  dt], # area
-            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       0.0, 1.0], # d_area
+            [1.0, 0.0,  dt, 0.0, 0.5*dt**2, 0.0,       0.0, 0.0,       0.0], # x
+            [0.0, 1.0, 0.0,  dt, 0.0,       0.5*dt**2, 0.0, 0.0,       0.0], # y
+            [0.0, 0.0, 1.0, 0.0,  dt,       0.0,       0.0, 0.0,       0.0], # vx
+            [0.0, 0.0, 0.0, 1.0, 0.0,        dt,       0.0, 0.0,       0.0], # vy
+            [0.0, 0.0, 0.0, 0.0, 1.0,       0.0,       0.0, 0.0,       0.0], # ax
+            [0.0, 0.0, 0.0, 0.0, 0.0,       1.0,       0.0, 0.0,       0.0], # ay
+            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       1.0,  dt, 0.5*dt**2], # area
+            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       0.0, 1.0,        dt], # d_area
+            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       0.0, 0.0,       1.0], # dd_area
         ])
         
         # Observation Matrix (H) - we observe x, y, area
         self._kf.H = np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         ])
         
         # Covariance / Uncertainty
         self._kf.P *= 10.0
         
         # Process Noise
-        self._kf.Q = np.eye(8) * 0.1
-        self._kf.Q[4, 4] = 0.05  # ax noise (small, acceleration changes slowly)
+        self._kf.Q = np.eye(9) * 0.1
+        self._kf.Q[4, 4] = 0.05  # ax noise
         self._kf.Q[5, 5] = 0.05  # ay noise
         self._kf.Q[6, 6] = 2.0   # area noise
         self._kf.Q[7, 7] = 0.5   # d_area noise
+        self._kf.Q[8, 8] = 0.05  # dd_area noise (changes slowly)
         
         # Measurement Noise
         self._kf.R = np.array([
@@ -105,3 +107,7 @@ class StormFilter:
     @property
     def d_area(self) -> float:
         return self._kf.x[7, 0]
+
+    @property
+    def dd_area(self) -> float:
+        return self._kf.x[8, 0]

@@ -30,9 +30,16 @@ class FlowEstimator:
             return None
             
         # Normalizare pentru a scoate in evidenta contrastul (formele norilor)
-        # Inmultim cu 10 pentru a scala 0-25 mm/h spre 0-250 (uint8)
-        prev_img = np.clip(previous_rain * 10, 0, 255).astype(np.uint8)
-        curr_img = np.clip(current_rain * 10, 0, 255).astype(np.uint8)
+        # V19: Trecere la Logarithmic dBZ in loc de Linear Clip pentru a nu orbi algoritmul la furtunile > 25.5 mm/h
+        def rain_to_uint8(rain: np.ndarray) -> np.ndarray:
+            r_safe = np.clip(rain, 0.01, None)
+            dbz = 23.0 + 16.0 * np.log10(r_safe)
+            # Clipam fizic intre 0 si 60 dBZ si mapam spre 0-255 (uint8)
+            dbz_norm = np.clip(dbz, 0.0, 60.0) * (255.0 / 60.0)
+            return dbz_norm.astype(np.uint8)
+            
+        prev_img = rain_to_uint8(previous_rain)
+        curr_img = rain_to_uint8(current_rain)
         
         h, w = prev_img.shape
         

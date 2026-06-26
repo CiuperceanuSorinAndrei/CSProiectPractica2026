@@ -42,6 +42,7 @@ class FrameResult:
     roi_volume_m3: float
     predicted_roi_volume_m3: float
     predicted_volumes_horizons: dict[str, float]
+    instant_predicted_volumes: dict[str, float]
     global_csi: dict[str, float]
     global_far: dict[str, float]
     global_pod: dict[str, float]
@@ -163,7 +164,7 @@ class Orchestrator:
         if len(self._predictions_queue) > 25:
             self._predictions_queue.pop(0)
 
-        roi_volume_m3, predicted_volumes = Evaluator.calculate_volumes(
+        roi_volume_m3, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
             rain_rate, float_preds, roi_mask, geom.lat_grid, horizons
         )
 
@@ -185,6 +186,7 @@ class Orchestrator:
             roi_volume_m3=roi_volume_m3,
             predicted_roi_volume_m3=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,
+            instant_predicted_volumes=instant_predicted_volumes,
             global_csi=csi,
             global_far=far,
             global_pod=pod,

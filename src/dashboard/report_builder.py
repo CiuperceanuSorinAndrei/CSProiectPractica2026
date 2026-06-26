@@ -113,16 +113,32 @@ class ReportBuilder:
                 html.Td(f"{p:.2f}"), html.Td(f"{fs:.2f}")
             ]))
 
-        # Calculam integrarea volumetrica totala per orizont vs istoric
+        # Calculam integrarea volumetrica totala per orizont aliniata corect in timp
         vol_rows = []
-        vol_real = hist.total_volume_m3 / 1000.0
+        
+        horizon_steps = {"30m": 2, "1h": 4, "2h": 8}
+        
         for horizon in ["30m", "1h", "2h"]:
-            vol_pred = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
-            delta_pct = ((vol_pred - vol_real) / vol_real * 100.0) if vol_real > 0 else 0.0
+            steps = horizon_steps[horizon]
+            
+            # Daca nu avem destule cadre pentru a alinia orizontul, trecem peste sau punem 0
+            if len(hist.true_volumes) > steps and len(hist.pred_volumes[horizon]) > steps:
+                # Volumul real este suma de la pasul 'steps' pana la final
+                aligned_true = hist.true_volumes[steps:]
+                # Volumul prezis este suma prezicerilor facute cu 'steps' in urma, pentru cadrele de azi
+                aligned_pred = hist.pred_volumes[horizon][:-steps]
+                
+                vol_real_sum = sum(aligned_true) / 1000.0
+                vol_pred_sum = sum(aligned_pred) / 1000.0
+            else:
+                vol_real_sum = hist.total_volume_m3 / 1000.0
+                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
+            
+            delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
             
             vol_rows.append(html.Tr([
-                html.Td(horizon), html.Td(f"{vol_real:.0f}"), 
-                html.Td(f"{vol_pred:.0f}"), html.Td(f"{delta_pct:+.1f}%")
+                html.Td(horizon), html.Td(f"{vol_real_sum:.0f}"), 
+                html.Td(f"{vol_pred_sum:.0f}"), html.Td(f"{delta_pct:+.1f}%")
             ]))
 
         return html.Div([
