@@ -178,12 +178,12 @@ class DashboardLayout:
                 dbc.Row([
                     dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
                     dbc.Col(self._metric_card("Aport Curent (15m)", "val-current-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Anticipat (Viitor)", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Anticipat (Rata/15m)", "val-predicted-vol", "info", "info")),
                     dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
                 html.H4("Performanță Predicție (CSI/FAR/POD/FSS)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
-                    dbc.Col(self._metric_card("Orizont +15 min", "val-metrics-15m", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +30 min", "val-metrics-15m", "success", "success")),
                     dbc.Col(self._metric_card("Orizont +1 oră", "val-metrics-1h", "success", "success")),
                     dbc.Col(self._metric_card("Orizont +2 ore", "val-metrics-3h", "success", "success")),
                     dbc.Col(self._metric_card("Scor Mediu", "val-metrics-total", "success", "success")),
