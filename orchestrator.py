@@ -1,9 +1,7 @@
-"""Orchestrator: coordoneaza procesarea cadrelor si pastreaza starea intre ele.
+"""Orchestrator: coordoneaza procesarea cadrelor.
 
-Encapsuleaza toata logica de procesare a unui cadru (citire, crop, detectie,
-tracking) intr-o singura metoda process_frame(). Starea cinematica (Kalman)
-este detinuta de StormTracker; aici pastram doar masca globala prezisa pentru
-metricile globale CSI/FAR/POD.
+Encapsuleaza toata logica de procesare a unui cadru intr-o singura metoda process_frame(),
+actionand ca un Dispatcher curat catre modulele specializate.
 """
 from __future__ import annotations
 
@@ -12,12 +10,11 @@ from typing import Any
 import threading
 
 import numpy as np
-import scipy.sparse as sp
-import scipy.ndimage as ndimage
 
 from src.core.storm_cell_detector import StormCellDetector
 from src.core.storm_tracker import StormTracker
-from src.core.forecast_metrics import ForecastMetrics
+from src.core.advection_engine import AdvectionEngine
+from src.core.evaluator import Evaluator
 from src.geo.dataset_cropper import DatasetCropper
 from src.geo.projection import GeoProjection
 from src.io.netcdf_reader import NetCdfReader
@@ -37,12 +34,13 @@ class FrameResult:
     mean_centroid_error: float
     mean_size_error: float
     num_tracked: int
-    roi_volume_m3: float  # Volumul de precipitatii in ROI in metri cubi / ora
-    predicted_roi_volume_m3: float  # Volumul prezis in ROI pentru cadrul urmator
-    predicted_volumes_horizons: dict[str, float] # Volumele prezise pe toate orizonturile
+    roi_volume_m3: float
+    predicted_roi_volume_m3: float
+    predicted_volumes_horizons: dict[str, float]
     global_csi: dict[str, float]
     global_far: dict[str, float]
     global_pod: dict[str, float]
+    global_fss: dict[str, float]
 
 
 class Orchestrator:
@@ -67,7 +65,7 @@ class Orchestrator:
         lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float,
     ) -> FrameResult | None:
-        """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking."""
+        """Proceseaza un cadru complet: citire -> crop -> detectie -> tracking -> advectie -> evaluare."""
         if not self._lock.acquire(blocking=True):
             return None
             
@@ -77,36 +75,27 @@ class Orchestrator:
             return None
 
         try:
+            # 1. IO & Geo Projection
             ds_cropped = DatasetCropper(lon_min, lon_max, lat_min, lat_max).crop(ds)
             if ds_cropped is None:
                 return None
 
-            # Proiectie geostationary -> Lat/Lon (transformer cached)
             proj_info = ds_cropped["geostationary_projection"].attrs
             lon_grid, lat_grid = GeoProjection.grid_to_latlon(
                 ds_cropped["nx"].values, ds_cropped["ny"].values, proj_info,
             )
 
-            # Pregatire matrice precipitatii
             rain_rate = ds_cropped["rr"].values.copy()
             rain_rate[rain_rate < 0] = 0.0
-            # Mascam doar valorile < 0.1 pentru a lasa burnita vizibila pe harta
             rain_rate_masked = np.ma.masked_where(rain_rate < 0.1, rain_rate)
 
-            # Calculam distanta pana la centru pentru a defini aria de interes (ROI) imediat
+            # Masca de arie de interes (ROI)
             dist_grid = self._haversine_dist_grid(center_lat, center_lon, lat_grid, lon_grid)
             roi_mask = dist_grid <= radius_km
+            max_rain = float(np.max(rain_rate[roi_mask])) if np.any(roi_mask) else 0.0
 
-            # Rata maxima se afiseaza doar pentru aria de interes, nu global
-            if np.any(roi_mask):
-                max_rain = float(np.max(rain_rate[roi_mask]))
-            else:
-                max_rain = 0.0
-
-            # Detectie celule convective
+            # 2. Extractie Centroizi
             raw_storm_cells = self._detector.extract_cells(rain_rate)
-
-            # Filtrare: pastram doar celulele din BBox cu coordonate valide
             filtered_cells = []
             for cell in raw_storm_cells:
                 y_idx = int(cell["centroid_y"])
@@ -123,92 +112,33 @@ class Orchestrator:
                         cell["geo_lat"] = float(cell_lat)
                         filtered_cells.append(cell)
 
-            # Tracking cinematic hibrid (Kalman + Optical Flow). StormTracker gestioneaza
-            # intern resetarea la schimbarea rezolutiei grilei (zoom in/out pe harta).
-            tracked_cells = self._tracker.track(filtered_cells, rain_rate)
+            # 3. Tracking (Kalman + Dense Optical Flow)
+            tracked_cells, flow = self._tracker.track(filtered_cells, rain_rate)
 
-            # (roi_mask a fost deja calculat mai sus)
-
-            # --- CALCUL METRICI GLOBALE (doar in ROI) ---
-            global_csi, global_far, global_pod = {}, {}, {}
-            obs_mask = (rain_rate >= RAIN_THRESHOLD_MIN) & roi_mask
-
-            # Evaluare multi-orizont (15m, 1h, 2h, 5h)
+            # 4. Evaluare Metrici Trecut
             horizons = [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]
-            for steps_back, name in horizons:
-                if len(self._predictions_queue) >= steps_back:
-                    past_pred_sparse = self._predictions_queue[-steps_back].get(name)
-                    if past_pred_sparse is not None:
-                        past_pred = past_pred_sparse.toarray()
-                        if past_pred.shape == rain_rate.shape:
-                            pred_mask = (past_pred >= RAIN_THRESHOLD_MIN) & roi_mask
-                            if np.any(obs_mask) or np.any(pred_mask):
-                                global_csi[name] = ForecastMetrics.csi(obs_mask, pred_mask)
-                                global_far[name] = ForecastMetrics.far(obs_mask, pred_mask)
-                                global_pod[name] = ForecastMetrics.pod(obs_mask, pred_mask)
+            csi, far, pod, fss = Evaluator.calculate_global_metrics(
+                rain_rate, roi_mask, self._predictions_queue, horizons
+            )
 
-            # Aproximare grosiera a ariei: unghiul de vizualizare oblic la poli dilata fizic pixelul
-            pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
+            # 5. Advectie Viitor
+            sparse_preds, float_preds = AdvectionEngine.extrapolate(
+                rain_rate, flow, tracked_cells, horizons
+            )
 
-            # Calculam volumul ACUMULAT din toate precipitațiile (inclusiv burnița de 0.1 mm/h)
-            roi_volume_m3 = float(np.sum(rain_rate[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
-
-            # Faza 9: Global Advection via Sparse Interpolation
-            import cv2
-            flow_x, flow_y = StormTracker.generate_global_flow_field(rain_rate.shape, tracked_cells)
-            
-            horizons = [(1, "15m"), (4, "1h"), (8, "2h"), (20, "5h")]
-            new_global_preds = {}
-            predicted_volumes_horizons = {}
-            total_predicted_volume_m3 = 0.0
-            
-            grid_h, grid_w = rain_rate.shape
-            y_grid, x_grid = np.mgrid[0:grid_h, 0:grid_w].astype(np.float32)
-            
-            # Advecție globală (toată harta dintr-o mișcare)
-            for steps, name in horizons:
-                map_x = x_grid - flow_x * steps
-                map_y = y_grid - flow_y * steps
-                
-                # Mutăm precipitațiile
-                shifted_rain = cv2.remap(rain_rate, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                
-                # Decadere termodinamica
-                decay_factor = 0.98 ** steps
-                shifted_rain *= decay_factor
-                
-                # Estompare Gaussiana (Covariance Blurring) din Faza 7
-                if steps > 1:
-                    sigma = min(steps * 0.2, 3.0)
-                    shifted_rain = ndimage.gaussian_filter(shifted_rain, sigma=sigma)
-                    
-                # Masca booleană pentru calcul CSI
-                new_global_preds[name] = (shifted_rain >= RAIN_THRESHOLD_MIN).astype(np.float32)
-                
-                # Calcul Volum (toată ploaia din ROI, inclusiv aia fină > 0.0)
-                vol = float(np.sum(shifted_rain[roi_mask] * pixel_area_km2[roi_mask] * 250.0))
-                predicted_volumes_horizons[name] = vol
-                
-                if steps == 1:
-                    total_predicted_volume_m3 = vol
-
-            # Convertim in sparse matrix pentru a economisi memorie (salvam 95% RAM)
-            sparse_preds = {name: sp.csr_matrix(mask) for name, mask in new_global_preds.items()}
+            # Salvam in istoric pentru viitor
             self._predictions_queue.append(sparse_preds)
             if len(self._predictions_queue) > 25:
                 self._predictions_queue.pop(0)
 
+            # 6. Evaluare Volume Viitor
+            roi_volume_m3, predicted_volumes = Evaluator.calculate_volumes(
+                rain_rate, float_preds, roi_mask, lat_grid
+            )
+
             # Calcul metrici de eroare pe celulele urmarite
-            valid_errors = [
-                c.get("prediction_error_pixels", 0.0)
-                for c in tracked_cells
-                if c.get("is_tracked", False)
-            ]
-            size_errors = [
-                c.get("size_error_percent", 0.0)
-                for c in tracked_cells
-                if c.get("is_tracked", False)
-            ]
+            valid_errors = [c.get("prediction_error_pixels", 0.0) for c in tracked_cells if c.get("is_tracked", False)]
+            size_errors = [c.get("size_error_percent", 0.0) for c in tracked_cells if c.get("is_tracked", False)]
 
             return FrameResult(
                 tracked_cells=tracked_cells,
@@ -221,17 +151,17 @@ class Orchestrator:
                 mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
                 num_tracked=len([c for c in tracked_cells if c.get("is_tracked", False)]),
                 roi_volume_m3=roi_volume_m3,
-                predicted_roi_volume_m3=total_predicted_volume_m3,
-                predicted_volumes_horizons=predicted_volumes_horizons,
-                global_csi=global_csi,
-                global_far=global_far,
-                global_pod=global_pod,
+                predicted_roi_volume_m3=predicted_volumes.get("15m", 0.0),
+                predicted_volumes_horizons=predicted_volumes,
+                global_csi=csi,
+                global_far=far,
+                global_pod=pod,
+                global_fss=fss,
             )
         finally:
             self._lock.release()
             ds.close()
 
-    # Distanta Haversine (km) intre un punct fix si un grid de puncte
     @staticmethod
     def _haversine_dist_grid(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
         R = 6371.0

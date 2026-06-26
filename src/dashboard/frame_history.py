@@ -15,6 +15,7 @@ class FrameHistory:
         self.csi: dict[str, list[float]] = {"15m": [], "1h": [], "2h": []}
         self.far: dict[str, list[float]] = {"15m": [], "1h": [], "2h": []}
         self.pod: dict[str, list[float]] = {"15m": [], "1h": [], "2h": []}
+        self.fss: dict[str, list[float]] = {"15m": [], "1h": [], "2h": []}
 
     def accumulate(self, result) -> None:
         self.total_volume_m3 += result.roi_volume_m3
@@ -25,8 +26,9 @@ class FrameHistory:
                     self.csi[horizon].append(result.global_csi[horizon])
                     self.far[horizon].append(result.global_far[horizon])
                     self.pod[horizon].append(result.global_pod[horizon])
+                    self.fss[horizon].append(result.global_fss.get(horizon, 0.0))
 
-    def averages(self, horizon: str = "15m") -> tuple[float | None, float | None, float | None]:
+    def averages(self, horizon: str = "15m") -> tuple[float | None, float | None, float | None, float | None]:
         def avg(xs):
             return float(np.mean(xs)) if xs else None
-        return avg(self.csi[horizon]), avg(self.far[horizon]), avg(self.pod[horizon])
+        return avg(self.csi[horizon]), avg(self.far[horizon]), avg(self.pod[horizon]), avg(self.fss[horizon])

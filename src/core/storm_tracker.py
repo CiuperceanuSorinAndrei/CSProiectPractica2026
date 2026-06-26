@@ -52,7 +52,7 @@ class StormTracker:
         self._previous_cells = []
         self._previous_rain_matrix = None
 
-    def track(self, current_cells: list[dict[str, Any]], rain_matrix: np.ndarray) -> list[dict[str, Any]]:
+    def track(self, current_cells: list[dict[str, Any]], rain_matrix: np.ndarray) -> tuple[list[dict[str, Any]], np.ndarray | None]:
         if self._previous_rain_matrix is not None and self._previous_rain_matrix.shape != rain_matrix.shape:
             self.reset()
 
@@ -62,10 +62,9 @@ class StormTracker:
         # 1. Optical flow global
         flow = self._compute_optical_flow(self._previous_rain_matrix, rain_matrix)
 
-        # 2. Kalman predict (pentru ambele modele)
+        # 2. Kalman predict
         for kf_dict in self._kalman_bank.values():
             kf_dict["CV"].predict()
-            kf_dict["CA"].predict()
 
         # Pregatim celulele curente (calcul volum, etc.)
         for c_cell in current_cells:
@@ -199,17 +198,14 @@ class StormTracker:
                     c_cell["centroid_y"], c_cell["centroid_x"], pred_y_prior, pred_x_prior,
                 )
 
-                obs_z = np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]])
+                # Observam x, y si area curenta
+                obs_z = np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]], [float(c_area)]])
 
                 max_y, max_x = rain_matrix.shape
                 cy, cx = c_cell["centroid_y"], c_cell["centroid_x"]
                 kf_dict["CV"].update(obs_z)
-                kf_dict["CA"].update(obs_z)
 
-                # Switching: Alegem modelul care a avut eroarea (residual y) mai mica
-                err_cv = np.linalg.norm(kf_dict["CV"].y)
-                err_ca = np.linalg.norm(kf_dict["CA"].y)
-                kf_dict["best"] = "CV" if err_cv <= err_ca else "CA"
+                kf_dict["best"] = "CV"
                 tracked_cell["centroid_history"].append((float(c_cell["centroid_y"]), float(c_cell["centroid_x"])))
                 tracked_cell["centroid_history"] = tracked_cell["centroid_history"][-6:]
                 tracked_cell["area_history"].append(int(c_area))
@@ -260,10 +256,11 @@ class StormTracker:
                         inherited_vx = self._kalman_bank[p_id][best_model].x[2, 0]
                         inherited_vy = self._kalman_bank[p_id][best_model].x[3, 0]
 
-                # Initializam cu viteza mostenita (daca e 0.0, 0.0 inseamna nastere normala)
+                # Initializam cu viteza si aria mostenite
                 self._kalman_bank[cell_id] = self._instantiate_kalman_filter(
                     c_cell["centroid_y"], c_cell["centroid_x"],
-                    inherited_vy, inherited_vx
+                    inherited_vy, inherited_vx,
+                    float(c_area), 0.0
                 )
                 active_ids.add(cell_id)
 
@@ -274,6 +271,8 @@ class StormTracker:
             
             tracked_cell["v_x"] = current_kf.x[2, 0]
             tracked_cell["v_y"] = current_kf.x[3, 0]
+            tracked_cell["predicted_area_kalman"] = max(1.0, float(current_kf.x[4, 0]))
+            tracked_cell["d_area_kalman"] = float(current_kf.x[5, 0])
 
 
 
@@ -316,39 +315,7 @@ class StormTracker:
         self._previous_cells = tracked_cells
         self._previous_rain_matrix = rain_matrix.copy()
 
-        return tracked_cells
-
-    @staticmethod
-    def generate_global_flow_field(grid_shape: tuple[int, int], tracked_cells: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
-        from scipy.interpolate import griddata
-        h, w = grid_shape
-        if not tracked_cells:
-            return np.zeros((h, w), dtype=np.float32), np.zeros((h, w), dtype=np.float32)
-            
-        pts, vxs, vys = [], [], []
-        for c in tracked_cells:
-            if c.get("is_tracked", False):
-                pts.append([c["centroid_y"], c["centroid_x"]])
-                vxs.append(c.get("v_x", 0.0))
-                vys.append(c.get("v_y", 0.0))
-                
-        if not pts:
-            return np.zeros((h, w), dtype=np.float32), np.zeros((h, w), dtype=np.float32)
-            
-        pts = np.array(pts)
-        vxs = np.array(vxs)
-        vys = np.array(vys)
-        
-        if len(pts) == 1:
-            return np.full((h, w), vxs[0], dtype=np.float32), np.full((h, w), vys[0], dtype=np.float32)
-            
-        # Interpolare Nearest pentru a extinde viteza pe toata harta fara goluri
-        y_grid, x_grid = np.mgrid[0:h, 0:w]
-        flow_x = griddata(pts, vxs, (y_grid, x_grid), method='nearest').astype(np.float32)
-        flow_y = griddata(pts, vys, (y_grid, x_grid), method='nearest').astype(np.float32)
-        
-        return flow_x, flow_y
-
+        return tracked_cells, flow
 
     @staticmethod
     def _compute_area_trend(tracked_cell: dict) -> float:
@@ -411,32 +378,43 @@ class StormTracker:
     @staticmethod
     def _instantiate_kalman_filter(
         initial_y: float, initial_x: float,
-        initial_vy: float = 0.0, initial_vx: float = 0.0
+        initial_vy: float = 0.0, initial_vx: float = 0.0,
+        initial_area: float = 1.0, initial_d_area: float = 0.0
     ) -> dict[str, Any]:
-        kf_cv = KalmanFilter(dim_x=4, dim_z=2)
-        kf_cv.x = np.array([[initial_x], [initial_y], [initial_vx], [initial_vy]])
-        kf_cv.F = np.array([[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
-        kf_cv.H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
-        kf_cv.P *= 1.2
-        kf_cv.Q = np.array([[0.005, 0.0, 0.0, 0.0], [0.0, 0.005, 0.0, 0.0], [0.0, 0.0, 0.02, 0.0], [0.0, 0.0, 0.0, 0.02]])
-        kf_cv.R = np.array([[10.0, 0.0], [0.0, 10.0]])
-
-        kf_ca = KalmanFilter(dim_x=6, dim_z=2)
-        kf_ca.x = np.array([[initial_x], [initial_y], [initial_vx], [initial_vy], [0.0], [0.0]])
-        kf_ca.F = np.array([
-            [1., 0., 1., 0., 0.5, 0. ],
-            [0., 1., 0., 1., 0.,  0.5],
-            [0., 0., 1., 0., 1.,  0. ],
-            [0., 0., 0., 1., 0.,  1. ],
-            [0., 0., 0., 0., 1.,  0. ],
-            [0., 0., 0., 0., 0.,  1. ]
+        kf = KalmanFilter(dim_x=6, dim_z=3)
+        # Starea: [x, y, vx, vy, area, d_area]
+        kf.x = np.array([[initial_x], [initial_y], [initial_vx], [initial_vy], [initial_area], [initial_d_area]])
+        
+        # Matricea de Tranzitie (F)
+        kf.F = np.array([
+            [1.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
         ])
-        kf_ca.H = np.array([[1., 0., 0., 0., 0., 0.], [0., 1., 0., 0., 0., 0.]])
-        kf_ca.P *= 1.2
-        kf_ca.Q = np.eye(6) * 0.01
-        kf_ca.R = np.array([[10.0, 0.0], [0.0, 10.0]])
+        
+        # Matricea de Observatie (H) - observam x, y, area
+        kf.H = np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        ])
+        
+        # Incertitudini
+        kf.P *= 10.0
+        kf.Q = np.eye(6) * 0.1
+        kf.Q[4, 4] = 2.0  # Zgomot proces arie
+        kf.Q[5, 5] = 0.5  # Zgomot proces crestere arie
+        
+        kf.R = np.array([
+            [5.0, 0.0, 0.0],
+            [0.0, 5.0, 0.0],
+            [0.0, 0.0, 20.0]  # Zgomot masuratoare arie mai mare
+        ])
 
-        return {"CV": kf_cv, "CA": kf_ca, "best": "CV"}
+        return {"CV": kf, "best": "CV"}
 
     @staticmethod
     def translate_mask(mask: np.ndarray, shift_y: float, shift_x: float) -> np.ndarray:

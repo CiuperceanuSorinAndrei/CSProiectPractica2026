@@ -19,6 +19,7 @@ from src.io.cloud_data_service import CloudDataService
 from src.ui_helpers.plotting import StormMapPlotter
 from config import PREDEFINED_LOCATIONS, RAIN_VMAX, RAIN_THRESHOLD_MIN, BASE_DIR
 
+import uuid
 from src.dashboard.constants import (
     DATA_DIR, MANUAL_LOCATION,
     MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT,
@@ -28,14 +29,26 @@ from src.dashboard.frame_store import FrameStore
 from src.dashboard.frame_history import FrameHistory
 from src.dashboard.dashboard_layout import DashboardLayout
 
+# --- Multi-User State Management ---
+# In lipsa de Redis/Celery, folosim dictionare globale mapate pe session_id.
+# Acest lucru previne Race Conditions cand 2 utilizatori acceseaza simultan aplicatia.
+SESSION_ORCHESTRATORS = {}
+SESSION_HISTORY = {}
+
+def get_session_state(session_id: str) -> tuple[Orchestrator, FrameHistory]:
+    if not session_id:
+        session_id = "default"
+    if session_id not in SESSION_ORCHESTRATORS:
+        SESSION_ORCHESTRATORS[session_id] = Orchestrator()
+        SESSION_HISTORY[session_id] = FrameHistory()
+    return SESSION_ORCHESTRATORS[session_id], SESSION_HISTORY[session_id]
+
 
 class NowcastingDashboard:
-    """Aplicatia Dash: detine orchestrator-ul, serviciul de date, starea si callbacks."""
+    """Aplicatia Dash: detine serviciul de date si layout-ul."""
 
     def __init__(self):
         self._store = FrameStore(DATA_DIR)
-        self._history = FrameHistory()
-        self._orch = Orchestrator()
         self._data_service = CloudDataService()
 
         # assets_folder pointat explicit la folderul assets din radacina proiectului
@@ -46,7 +59,11 @@ class NowcastingDashboard:
             assets_folder=os.path.join(BASE_DIR, "assets"),
         )
         self.app.title = "Estimarea volumului de precipitatii"
-        self.app.layout = DashboardLayout(self._store).build()
+        
+        def serve_layout():
+            return DashboardLayout(self._store).build()
+            
+        self.app.layout = serve_layout
         self._register_callbacks()
 
     @property
@@ -159,11 +176,13 @@ class NowcastingDashboard:
             Input("roi-radius-slider", "value"),
             State("run-mode-select", "value"),
             State("active-time-range", "data"),
+            State("session-id", "data"),
         )(self._update_dashboard)
 
         app.callback(
             Output("frame-slider", "value", allow_duplicate=True),
             Input("btn-reset", "n_clicks"),
+            State("session-id", "data"),
             prevent_initial_call=True,
         )(self._handle_reset)
 
@@ -250,10 +269,12 @@ class NowcastingDashboard:
         return msg, max(len(filtered) - 1, 0), 0, time_range
 
     # ---- main dashboard callback ------------------------------------------
-    def _update_dashboard(self, frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, run_mode, time_range):
+    def _update_dashboard(
+        self, frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
+    ):
         map_zoom, radius_km, warnings = self._validate_view_inputs(map_zoom, radius_km)
 
-        nc_files = self._store.filtered(time_range, run_mode)
+        nc_files = self._store.filtered(tr_data, run_mode)
         if not nc_files:
             return self._no_data_response()
 
@@ -262,23 +283,23 @@ class NowcastingDashboard:
         center = self._resolve_center(loc_choice, m_lat, m_lon)
         bbox = self._compute_bbox(center, map_zoom)
 
-        result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km, run_mode, time_range)
+        result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km, run_mode, tr_data, session_id)
         if result is None:
             return self._error_response(label)
 
         title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
         src = self._render_map(result, bbox, center, radius_km, title)
         diagnostics = self._build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, m_15m, m_1h, m_2h, m_tot, tracked, in_roi = self._format_metrics(result)
+        hist_vol, curr_vol, pred_vol, max_rain, m_15m, m_1h, m_2h, m_tot, tracked, in_roi = self._format_metrics(session_id, result)
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
-        final_report = self._build_final_report(run_mode, frame_idx, len(nc_files))
+        final_report = self._build_final_report(session_id, run_mode, frame_idx, len(nc_files))
 
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
                 m_15m, m_1h, m_2h, m_tot, tracked, in_roi,
                 lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km)
 
     # ---- update_dashboard helpers -----------------------------------------
-    def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km, run_mode, time_range):
+    def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km, run_mode, time_range, session_id):
         """Proceseaza cadrul curent gestionand starea: avans consecutiv (acumuleaza),
         acelasi cadru (doar re-randare), sau salt (proceseaza cadrele omise). Returneaza
         FrameResult sau None (eroare/server ocupat)."""
@@ -289,21 +310,23 @@ class NowcastingDashboard:
         is_new_dataset = getattr(self, "_last_dataset_id", None) != dataset_id
 
         def run(idx):
-            return self._orch.process_frame(
+            orch, _ = get_session_state(session_id)
+            return orch.process_frame(
                 self._store.path(nc_files[idx]),
                 lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
             )
 
-        hist = self._history
+        _, hist = get_session_state(session_id)
         is_consecutive = (frame_idx == hist.last_frame_idx + 1)
         is_same_frame = (frame_idx == hist.last_frame_idx)
 
         if is_new_dataset or frame_idx < hist.last_frame_idx:
             # Schimbare de dataset sau Scrubbing backward: Reset complet
-            self._orch.reset_tracking()
-            self._history = FrameHistory()
+            orch, _ = get_session_state(session_id)
+            orch.reset_tracking()
+            SESSION_HISTORY[session_id] = FrameHistory()
             self._last_dataset_id = dataset_id
-            hist = self._history
+            hist = SESSION_HISTORY[session_id]
             for i in range(0, frame_idx):
                 inter = run(i)
                 if inter:
@@ -420,31 +443,40 @@ class NowcastingDashboard:
                                         "border": "1px solid var(--c-border)", "borderRadius": "5px"}),
         ], className="mb-4")
 
-    def _format_metrics(self, result):
-        hist_vol = f"{self._history.total_volume_m3 / 1000.0:.2f} mii m³"
+    def _format_metrics(self, session_id, result):
+        _, hist = get_session_state(session_id)
+        hist_vol = f"{hist.total_volume_m3 / 1000.0:.2f} mii m³"
         curr_vol = f"{result.roi_volume_m3 / 1000.0:.2f} mii m³"
-        pred_vol = f"{result.predicted_roi_volume_m3 / 1000.0:.2f} mii m³"
+        
+        vols = result.predicted_volumes_horizons
+        pred_vol_str = (
+            f"15m: {vols.get('15m', 0)/1000.0:.1f} | "
+            f"1h: {vols.get('1h', 0)/1000.0:.1f} | "
+            f"2h: {vols.get('2h', 0)/1000.0:.1f} mii m³"
+        )
+        pred_vol = pred_vol_str
         max_rain = f"{result.max_rain:.2f}"
 
         def fmt_avg(horizon):
-            c, f, p = self._history.averages(horizon)
+            c, f, p, fs = hist.averages(horizon)
             if c is None:
                 return "N/A (Așteaptă)"
-            return f"{c:.2f} / {f:.2f} / {p:.2f}"
+            return f"{c:.2f} / {f:.2f} / {p:.2f} / {fs:.2f}"
 
         m_15m = fmt_avg("15m")
         m_1h = fmt_avg("1h")
         m_2h = fmt_avg("2h")
             
         # Calculam o medie globala (Total) intre toate orizonturile
-        avg_c, avg_f, avg_p, count = 0.0, 0.0, 0.0, 0
+        avg_c, avg_f, avg_p, avg_fs, count = 0.0, 0.0, 0.0, 0.0, 0
         for h in ["15m", "1h", "2h"]:
-            c, f, p = self._history.averages(h)
+            c, f, p, fs = hist.averages(h)
             if c is not None:
-                avg_c += c; avg_f += f; avg_p += p; count += 1
-                
+                avg_c += c; avg_f += f; avg_p += p; avg_fs += fs; count += 1
+        
+        m_tot = "N/A"
         if count > 0:
-            m_tot = f"{avg_c/count:.2f} / {avg_f/count:.2f} / {avg_p/count:.2f}"
+            m_tot = f"{avg_c/count:.2f} / {avg_f/count:.2f} / {avg_p/count:.2f} / {avg_fs/count:.2f}"
         else:
             m_tot = "N/A (Așteaptă)"
 
@@ -452,15 +484,17 @@ class NowcastingDashboard:
         in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
         return hist_vol, curr_vol, pred_vol, max_rain, m_15m, m_1h, m_2h, m_tot, tracked, in_roi
 
-    def _build_final_report(self, run_mode, frame_idx, n_files):
+    def _build_final_report(self, session_id, run_mode, frame_idx, n_files):
         if run_mode == "live" or frame_idx != n_files - 1:
             return ""
 
+        _, hist = get_session_state(session_id)
+
         def fmt_row(horizon, label):
-            c, f, p = self._history.averages(horizon)
+            c, f, p, fs = hist.averages(horizon)
             if c is None:
-                return html.Tr([html.Td(label), html.Td("N/A"), html.Td("N/A"), html.Td("N/A")])
-            return html.Tr([html.Td(label), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"), html.Td(f"{p:.2f}")])
+                return html.Tr([html.Td(label), html.Td("N/A"), html.Td("N/A"), html.Td("N/A"), html.Td("N/A")])
+            return html.Tr([html.Td(label), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"), html.Td(f"{p:.2f}"), html.Td(f"{fs:.2f}")])
 
         return dbc.Alert(
             [
@@ -468,12 +502,12 @@ class NowcastingDashboard:
                 html.P("Raport agregat de performanță la finalul episodului selectat:"),
                 html.Hr(),
                 dbc.Row([
-                    dbc.Col(html.Strong(f"Volum Total Precipitat (Bazin): {self._history.total_volume_m3 / 1000.0:.0f} mii m³")),
-                    dbc.Col(html.Strong(f"Volum Total Anticipat (Bazin): {self._history.total_predicted_volume_m3 / 1000.0:.0f} mii m³")),
+                    dbc.Col(html.Strong(f"Volum Total Precipitat (Bazin): {hist.total_volume_m3 / 1000.0:.0f} mii m³")),
+                    dbc.Col(html.Strong(f"Volum Total Anticipat (Bazin): {hist.total_predicted_volume_m3 / 1000.0:.0f} mii m³")),
                 ], className="mb-3"),
                 dbc.Table(
                     [
-                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("CSI"), html.Th("FAR"), html.Th("POD")])),
+                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("CSI"), html.Th("FAR"), html.Th("POD"), html.Th("FSS")])),
                         html.Tbody([
                             fmt_row("15m", "15 minute"),
                             fmt_row("1h", "1 oră"),

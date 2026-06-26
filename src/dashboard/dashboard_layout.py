@@ -1,4 +1,5 @@
 """Constructia structurii UI (sidebar + continut). Stilurile dark traiesc in assets/custom.css."""
+import uuid
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
@@ -158,7 +159,7 @@ class DashboardLayout:
             dcc.Store(id="is-processing", data=False),
             dcc.Store(id="active-time-range", data=DEFAULT_TIME_RANGE),
             dcc.Interval(id="live-polling-interval", interval=15 * 60 * 1000, n_intervals=0, disabled=True),
-            dcc.Store(id="session-id", data=None),
+            dcc.Store(id="session-id", data=str(uuid.uuid4().hex)),
         ]
 
     # ---- content -----------------------------------------------------------
@@ -180,7 +181,7 @@ class DashboardLayout:
                     dbc.Col(self._metric_card("Anticipat (Viitor)", "val-predicted-vol", "info", "info")),
                     dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
-                html.H4("Performanță Predicție (CSI/FAR/POD)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                html.H4("Performanță Predicție (CSI/FAR/POD/FSS)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
                     dbc.Col(self._metric_card("Orizont +15 min", "val-metrics-15m", "success", "success")),
                     dbc.Col(self._metric_card("Orizont +1 oră", "val-metrics-1h", "success", "success")),
