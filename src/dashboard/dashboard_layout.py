@@ -134,7 +134,20 @@ class DashboardLayout:
     def _time_section(self) -> list:
         initial_max = max(len(self._store.filtered(DEFAULT_TIME_RANGE, "historic")) - 1, 0)
         return [
-            html.H6("Control Timp", className="fw-bold"),
+            html.Div(
+                [
+                    html.H6("Control Timp", className="fw-bold mb-0", style={"margin-right": "5px"}),
+                    # Spinner mic la dreapta titlului, vizibil cat timp callback-ul principal
+                    # genereaza o imagine noua (sentinel-ul e output, deci Dash il marcheaza "loading").
+                    # borderWidth subtire -> inel circular curat.
+                    dbc.Spinner(
+                        html.Div(id="img-loading-sentinel"),
+                        size="sm", color="info", type="border",
+                        spinner_style={"width": "1rem", "height": "1rem", "borderWidth": "0.15rem"},
+                    ),
+                ],
+                className="d-flex align-items-center gap-2 mb-2",
+            ),
             dbc.Label(id="frame-label", children="Cadru Selectat: N/A", className="fw-bold text-light"),
             dcc.Slider(0, initial_max, 1, value=0, marks={}, id="frame-slider", className="mb-3"),
             dbc.Row([

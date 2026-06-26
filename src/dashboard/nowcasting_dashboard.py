@@ -140,6 +140,7 @@ class NowcastingDashboard:
             Output("input-warnings", "children"),
             Output("map-zoom-slider", "value"),
             Output("roi-radius-slider", "value"),
+            Output("img-loading-sentinel", "children"),  # tine spinner-ul aprins cat ruleaza callback-ul
             Input("frame-slider", "value"),
             Input("location-select", "value"),
             Input("manual-lat", "value"),
@@ -275,7 +276,7 @@ class NowcastingDashboard:
         m_15m, m_1h, m_3h, m_total = self._metric_windows(metrics)
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
                 m_15m, m_1h, m_3h, m_total, tracked, in_roi,
-                lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km)
+                lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km, "")
 
     # ---- update_dashboard helpers -----------------------------------------
     def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km):
@@ -460,10 +461,10 @@ class NowcastingDashboard:
     def _no_data_response():
         return ("", "0.00", "0.00", "0.00", "0.0",
                 "N/A", "N/A", "N/A", "N/A", "0", "0", "Fără Date", "", "",
-                False, dash.no_update, dash.no_update, dash.no_update)
+                False, dash.no_update, dash.no_update, dash.no_update, "")
 
     @staticmethod
     def _error_response(label):
         return ("", "Eroare", "Eroare", "Eroare", "Eroare",
                 "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
-                f"Eroare fisier {label}", "", "", False, dash.no_update, dash.no_update, dash.no_update)
+                f"Eroare fisier {label}", "", "", False, dash.no_update, dash.no_update, dash.no_update, "")
