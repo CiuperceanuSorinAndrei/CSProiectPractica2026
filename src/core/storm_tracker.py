@@ -1,117 +1,86 @@
-"""Modul de cinematica: urmarire centroizi (Kalman) + predictie morfologica (OpenCV Flow).
-
-StormTracker pastreaza starea de tracking (bancul de filtre Kalman, celulele si
-matricea de ploaie din cadrul anterior) intre apeluri, deci o singura instanta
-proceseaza intregul flux de cadre.
-"""
+"""Modul de cinematica: urmarire centroizi folosind filtru Kalman 8D si KD-Tree Matcher."""
 from __future__ import annotations
 
 import uuid
 from typing import Any
 
-import cv2
 import numpy as np
-from filterpy.kalman import KalmanFilter
 
-_mgrid_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+from src.core.storm_filter import StormFilter
+from src.core.matcher import Matcher
+from src.core.flow_estimator import FlowEstimator
 
 
 class StormTracker:
-    _max_dist_pixels: int = None
-    _kalman_bank: dict = None
-    _previous_cells: list = None
-    _previous_rain_matrix: Any = None
+    USE_LOGISTIC_GROWTH = True
+    USE_ADAPTIVE_KALMAN = True
 
-    def __init__(self, max_dist_pixels: int = 18):
+    def __init__(self, max_dist_pixels: int = 15):
         self._max_dist_pixels = max_dist_pixels
-        self.reset()
+        self._kalman_bank: dict[str, StormFilter] = {}
+        self._previous_cells: list[dict] = []
+        self._previous_rain_matrix: np.ndarray | None = None
+        self._flow_estimator = FlowEstimator()
+
+    @staticmethod
+    def build_cell_mask(cell: dict, rain_matrix: np.ndarray) -> np.ndarray:
+        if "_cached_mask" in cell:
+            return cell["_cached_mask"]
+        mask = np.zeros_like(rain_matrix, dtype=np.uint8)
+        coords = cell.get("coords", np.array([]))
+        if len(coords) > 0:
+            mask[coords[:, 0], coords[:, 1]] = 1
+        cell["_cached_mask"] = mask
+        return mask
 
     def reset(self) -> None:
-        """Goleste complet starea de tracking."""
         self._kalman_bank = {}
         self._previous_cells = []
         self._previous_rain_matrix = None
 
-    def track(self, current_cells: list[dict[str, Any]], rain_matrix: np.ndarray) -> list[dict[str, Any]]:
-        """Urmareste centroizii folosind Kalman Filter si estimeaza evolutia morfologica
-        a formei folosind algoritmul OpenCV Dense Optical Flow (Farneback).
-
-        Args:
-            current_cells: Lista celulelor detectate in cadrul curent
-            rain_matrix: Matricea de precipitatii curenta
-
-        Returns:
-            Lista celulelor urmarite cu predictii de centroid si masca
-        """
-        # Daca s-a schimbat rezolutia grilei (zoom in/out pe harta), coordonatele
-        # Kalman nu mai sunt valide pe noul grid, deci resetam starea.
+    def track(self, current_cells: list[dict[str, Any]], rain_matrix: np.ndarray) -> tuple[list[dict[str, Any]], np.ndarray | None]:
         if self._previous_rain_matrix is not None and self._previous_rain_matrix.shape != rain_matrix.shape:
             self.reset()
 
         tracked_cells: list[dict[str, Any]] = []
         active_ids: set[str] = set()
 
-        # 1. Calculam campul de advectie (Optical Flow) daca avem cadrul anterior
-        flow = self._compute_optical_flow(self._previous_rain_matrix, rain_matrix)
+        # 1. Optical flow global (DIS)
+        flow = self._flow_estimator.compute(self._previous_rain_matrix, rain_matrix)
 
-        # 2. Predict pentru toate filtrele Kalman existente
+        # 2. Kalman predict (Constant Acceleration Model)
         for kf in self._kalman_bank.values():
             kf.predict()
 
-        # 3. Procesam fiecare celula curenta
+        # Pregatim celulele curente
         for c_cell in current_cells:
+            c_area = c_cell.get("area_pixels", c_cell.get("area", 1.0))
+            c_max = c_cell.get("max_intensity", 1.0)
+            c_cell["volume"] = c_area * (c_max * 0.4)
+            c_cell["area_pixels"] = int(c_area)
+            self.build_cell_mask(c_cell, rain_matrix)
+
+        for p_cell in self._previous_cells:
+            self.build_cell_mask(p_cell, rain_matrix)
+
+        # 3. Construim matricea de asocieri folosind KD-Tree
+        matches = Matcher.match_cells(
+            current_cells, self._previous_cells, self._kalman_bank, self._max_dist_pixels
+        )
+
+        # 4. Procesam fiecare celula cu asocierea gasita
+        for i, c_cell in enumerate(current_cells):
             tracked_cell = c_cell.copy()
             tracked_cell["is_tracked"] = False
             tracked_cell["centroid_history"] = list(c_cell.get("centroid_history", []))
             tracked_cell["area_history"] = list(c_cell.get("area_history", []))
             tracked_cell["cell_history"] = list(c_cell.get("cell_history", []))
-            tracked_cell["predicted_centroid_x"] = float(c_cell.get("centroid_x", 0.0))
-            tracked_cell["predicted_centroid_y"] = float(c_cell.get("centroid_y", 0.0))
+            c_area = tracked_cell["area_pixels"]
+            c_volume = tracked_cell["volume"]
 
-            c_area = c_cell.get("area_pixels", c_cell.get("area", 1.0))
-            c_max = c_cell.get("max_intensity", 1.0)
-            c_volume = c_area * (c_max * 0.4)
-            tracked_cell["volume"] = c_volume
-            tracked_cell["area_pixels"] = int(c_area)
-
-            # --- Matching cu celulele anterioare ---
-            best_match = None
-            min_hybrid_cost = float("inf")
-
-            for p_cell in self._previous_cells:
-                p_id = p_cell.get("cell_id")
-                if p_id not in self._kalman_bank:
-                    continue
-
-                pred_x = self._kalman_bank[p_id].x[0, 0]
-                pred_y = self._kalman_bank[p_id].x[1, 0]
-                radius_limit = max(
-                    self._max_dist_pixels,
-                    self._adaptive_match_radius(p_cell.get("area_pixels", p_cell.get("area", 1.0))),
-                )
-
-                dist = self._calculate_distance(c_cell["centroid_y"], c_cell["centroid_x"], pred_y, pred_x)
-                if dist > radius_limit:
-                    continue
-
-                p_area = p_cell.get("area_pixels", p_cell.get("area", 1.0))
-                area_ratio = max(c_area, p_area) / (min(c_area, p_area) + 1e-5)
-
-                p_volume = p_cell.get("volume", p_area * (p_cell.get("max_intensity", 1.0) * 0.4))
-                volume_ratio = max(c_volume, p_volume) / (min(c_volume, p_volume) + 1e-5)
-
-                prev_mask = self.build_cell_mask(p_cell, rain_matrix)
-                curr_mask = self.build_cell_mask(c_cell, rain_matrix)
-                iou_penalty = 1.0 - self._mask_iou(curr_mask, prev_mask)
-
-                hybrid_cost = dist + (area_ratio * 1.2) + (volume_ratio * 1.8) + (iou_penalty * 3.0)
-
-                if hybrid_cost < min_hybrid_cost:
-                    min_hybrid_cost = hybrid_cost
-                    best_match = p_cell
-
-            # --- Actualizare Kalman + istoric ---
-            if best_match:
+            if i in matches:
+                # Match existent
+                best_match = self._previous_cells[matches[i]]
                 cell_id = best_match["cell_id"]
                 tracked_cell["cell_id"] = cell_id
                 tracked_cell["is_tracked"] = True
@@ -121,20 +90,17 @@ class StormTracker:
 
                 p_volume = best_match.get("volume", 1.0)
                 tracked_cell["volume_trend"] = c_volume / (p_volume + 1e-5)
-                prev_area = float(best_match.get("area_pixels", c_area))
-                area_trend = c_area / (prev_area + 1e-5)
-                tracked_cell["area_trend"] = area_trend
-
+                
                 kf = self._kalman_bank[cell_id]
-                pred_x_prior, pred_y_prior = kf.x[0, 0], kf.x[1, 0]
-                tracked_cell["prediction_error_pixels"] = self._calculate_distance(
-                    c_cell["centroid_y"], c_cell["centroid_x"], pred_y_prior, pred_x_prior,
+                pred_x_prior, pred_y_prior = kf.x, kf.y
+                tracked_cell["prediction_error_pixels"] = np.sqrt(
+                    (c_cell["centroid_x"] - pred_x_prior) ** 2 + (c_cell["centroid_y"] - pred_y_prior) ** 2
                 )
 
-                kf.update(np.array([[c_cell["centroid_x"]], [c_cell["centroid_y"]]]))
-                tracked_cell["centroid_history"].append(
-                    (float(c_cell["centroid_y"]), float(c_cell["centroid_x"]))
-                )
+                # Update Kalman cu noua locatie si arie
+                kf.update(c_cell["centroid_x"], c_cell["centroid_y"], float(c_area))
+
+                tracked_cell["centroid_history"].append((float(c_cell["centroid_y"]), float(c_cell["centroid_x"])))
                 tracked_cell["centroid_history"] = tracked_cell["centroid_history"][-6:]
                 tracked_cell["area_history"].append(int(c_area))
                 tracked_cell["area_history"] = tracked_cell["area_history"][-6:]
@@ -146,47 +112,51 @@ class StormTracker:
                 tracked_cell["cell_history"] = tracked_cell["cell_history"][-6:]
                 active_ids.add(cell_id)
             else:
+                # Celula noua sau SPLIT
                 cell_id = str(uuid.uuid4())[:8]
                 tracked_cell["cell_id"] = cell_id
                 tracked_cell["prediction_error_pixels"] = 0.0
                 tracked_cell["volume_trend"] = 1.0
-                tracked_cell["centroid_history"] = [
-                    (float(c_cell["centroid_y"]), float(c_cell["centroid_x"]))
-                ]
+                tracked_cell["centroid_history"] = [(float(c_cell["centroid_y"]), float(c_cell["centroid_x"]))]
                 tracked_cell["area_history"] = [int(c_area)]
                 tracked_cell["cell_history"] = [{
                     "centroid_y": float(c_cell["centroid_y"]),
                     "centroid_x": float(c_cell["centroid_x"]),
                     "area_pixels": int(c_area),
                 }]
-                tracked_cell["area_trend"] = 1.0
 
-                self._kalman_bank[cell_id] = self._instantiate_kalman_filter(
-                    c_cell["centroid_y"], c_cell["centroid_x"],
+                # Pass 2: Detectare SPLIT din orfani
+                best_parent_dist = 1000.0
+                inherited_vy, inherited_vx = 0.0, 0.0
+                
+                for p_cell in self._previous_cells:
+                    p_id = p_cell.get("cell_id")
+                    if p_id not in self._kalman_bank:
+                        continue
+                        
+                    kf_parent = self._kalman_bank[p_id]
+                    dist = np.sqrt((c_cell["centroid_x"] - kf_parent.x) ** 2 + (c_cell["centroid_y"] - kf_parent.y) ** 2)
+                    
+                    if dist <= (self._max_dist_pixels * 2.5) and dist < best_parent_dist:
+                        best_parent_dist = dist
+                        inherited_vx = kf_parent.v_x
+                        inherited_vy = kf_parent.v_y
+
+                self._kalman_bank[cell_id] = StormFilter(
+                    initial_y=c_cell["centroid_y"], initial_x=c_cell["centroid_x"],
+                    initial_vy=inherited_vy, initial_vx=inherited_vx,
+                    initial_area=float(c_area), initial_d_area=0.0
                 )
                 active_ids.add(cell_id)
 
-            # --- Viteza din Kalman + observatii ---
-            current_kf = self._kalman_bank[cell_id]
-            tracked_cell["v_x"] = current_kf.x[2, 0]
-            tracked_cell["v_y"] = current_kf.x[3, 0]
-
-            if len(tracked_cell["centroid_history"]) >= 2:
-                history = tracked_cell["centroid_history"]
-                deltas_x = []
-                deltas_y = []
-                for idx in range(1, len(history)):
-                    prev_y, prev_x = history[idx - 1]
-                    curr_y, curr_x = history[idx]
-                    deltas_x.append(curr_x - prev_x)
-                    deltas_y.append(curr_y - prev_y)
-
-                obs_v_x = float(np.mean(deltas_x[-3:]))
-                obs_v_y = float(np.mean(deltas_y[-3:]))
-                tracked_cell["v_x"] = 0.4 * tracked_cell["v_x"] + 0.6 * obs_v_x
-                tracked_cell["v_y"] = 0.4 * tracked_cell["v_y"] + 0.6 * obs_v_y
-                current_kf.x[2, 0] = tracked_cell["v_x"]
-                current_kf.x[3, 0] = tracked_cell["v_y"]
+            # Viteza si dinamica din Kalman 8D
+            kf_current = self._kalman_bank[cell_id]
+            tracked_cell["v_x"] = kf_current.v_x
+            tracked_cell["v_y"] = kf_current.v_y
+            tracked_cell["a_x"] = kf_current.a_x
+            tracked_cell["a_y"] = kf_current.a_y
+            tracked_cell["predicted_area_kalman"] = max(1.0, kf_current.area)
+            tracked_cell["d_area_kalman"] = kf_current.d_area
 
             predicted_centroid_x = tracked_cell["centroid_x"] + tracked_cell["v_x"]
             predicted_centroid_y = tracked_cell["centroid_y"] + tracked_cell["v_y"]
@@ -194,106 +164,64 @@ class StormTracker:
             tracked_cell["predicted_centroid_y"] = float(predicted_centroid_y)
 
             # --- Predictie masca morfologica ---
-            full_current_mask = self.build_cell_mask(c_cell, rain_matrix)
-
-            if len(tracked_cell["area_history"]) >= 2:
-                area_deltas = []
-                for idx in range(1, len(tracked_cell["area_history"])):
-                    prev_a = max(tracked_cell["area_history"][idx - 1], 1)
-                    curr_a = max(tracked_cell["area_history"][idx], 1)
-                    area_deltas.append(curr_a / prev_a)
-                raw_area_trend = float(np.mean(area_deltas[-3:]))
-            else:
-                raw_area_trend = float(tracked_cell.get("area_trend", 1.0))
-
-            if len(tracked_cell["cell_history"]) >= 3:
-                recent_areas = [item["area_pixels"] for item in tracked_cell["cell_history"][-3:]]
-                recent_area_trend = float(np.mean(recent_areas) / max(recent_areas[0], 1))
-            else:
-                recent_area_trend = raw_area_trend
-
-            predicted_area_trend = float(np.clip(
-                0.8 * recent_area_trend + 0.2 * tracked_cell.get("volume_trend", 1.0),
-                0.90, 1.14,
-            ))
-            scale_factor = float(np.clip(np.sqrt(predicted_area_trend), 0.97, 1.05))
-            predicted_area_pixels = int(round(max(c_area, 1.0) * predicted_area_trend))
-
-            # Predictie forma prin deplasare masca (Optical Flow + Kalman blend)
-            if flow is not None:
-                cell_pixels = full_current_mask == 1
-                mean_flow_y = float(np.mean(flow[:, :, 1][cell_pixels])) if np.any(cell_pixels) else 0.0
-                mean_flow_x = float(np.mean(flow[:, :, 0][cell_pixels])) if np.any(cell_pixels) else 0.0
+            coords = c_cell.get("coords")
+            if flow is not None and coords is not None and len(coords) > 0:
+                mean_flow_y = float(np.mean(flow[coords[:, 0], coords[:, 1], 1]))
+                mean_flow_x = float(np.mean(flow[coords[:, 0], coords[:, 1], 0]))
                 shift_x = 0.75 * tracked_cell["v_x"] + 0.25 * mean_flow_x
                 shift_y = 0.75 * tracked_cell["v_y"] + 0.25 * mean_flow_y
             else:
                 shift_x = tracked_cell["v_x"]
                 shift_y = tracked_cell["v_y"]
 
-            predicted_mask = self._predict_mask_shape(
-                full_current_mask,
-                tracked_cell["centroid_y"],
-                tracked_cell["centroid_x"],
-                shift_y, shift_x,
-                scale_factor,
-            )
+            cached_mask = c_cell.get("_cached_mask")
+            if cached_mask is not None:
+                tracked_cell["predicted_mask"] = self.translate_mask(cached_mask, shift_y, shift_x)
 
-            tracked_cell["predicted_mask"] = predicted_mask
+            # Area trend logic
+            trend = self._compute_area_trend(tracked_cell)
+            tracked_cell["volume_trend"] = trend
+            predicted_area_pixels = int(round(max(c_area, 1.0) * trend))
             tracked_cell["predicted_area_pixels"] = predicted_area_pixels
             tracked_cell["size_error_pixels"] = abs(predicted_area_pixels - int(c_area))
-            tracked_cell["size_error_percent"] = (
-                100.0 * tracked_cell["size_error_pixels"] / max(int(c_area), 1)
-            )
-            tracked_cell["area_trend"] = predicted_area_trend
+            tracked_cell["size_error_percent"] = 100.0 * tracked_cell["size_error_pixels"] / max(int(c_area), 1)
+            
             tracked_cells.append(tracked_cell)
 
-        # Cleanup: stergem filtrele Kalman pentru celulele care nu mai sunt active
+        # Cleanup: stergem filtrele Kalman pentru celulele moarte
         for old_id in list(self._kalman_bank.keys()):
             if old_id not in active_ids:
                 del self._kalman_bank[old_id]
 
-        # Salvam starea pentru cadrul urmator
         self._previous_cells = tracked_cells
         self._previous_rain_matrix = rain_matrix.copy()
 
-        return tracked_cells
+        return tracked_cells, flow
 
-    # -----------------------------------------------------------------------
-    # Utilitare publice (folosite si de orchestrator pentru predictia volumului)
-    # -----------------------------------------------------------------------
     @staticmethod
-    def build_cell_mask(cell: dict, rain_matrix: np.ndarray) -> np.ndarray:
-        """Construieste masca binara a unei celule pe dimensiunea matricei de ploaie."""
-        if "_cached_mask" in cell:
-            return cell["_cached_mask"]
+    def _compute_area_trend(tracked_cell: dict) -> float:
+        if len(tracked_cell["area_history"]) >= 2:
+            area_deltas = [
+                max(tracked_cell["area_history"][idx], 1) / max(tracked_cell["area_history"][idx - 1], 1)
+                for idx in range(1, len(tracked_cell["area_history"]))
+            ]
+            raw_area_trend = float(np.mean(area_deltas[-3:]))
+        else:
+            raw_area_trend = float(tracked_cell.get("area_trend", 1.0))
 
-        mask = np.zeros_like(rain_matrix, dtype=np.uint8)
-        coords = cell.get("coords")
+        if len(tracked_cell["cell_history"]) >= 3:
+            recent_areas = [item["area_pixels"] for item in tracked_cell["cell_history"][-3:]]
+            recent_area_trend = float(np.mean(recent_areas) / max(recent_areas[0], 1))
+        else:
+            recent_area_trend = raw_area_trend
 
-        if coords is not None and len(coords) > 0:
-            coords = np.asarray(coords)
-            mask[coords[:, 0], coords[:, 1]] = 1
-            cell["_cached_mask"] = mask
-            return mask
-
-        # Fallback: reconstruim masca din centroid + arie
-        cy = int(cell.get("centroid_y", 0))
-        cx = int(cell.get("centroid_x", 0))
-        area = float(cell.get("area_pixels", cell.get("area", 1.0)))
-        radius = max(1, int(np.sqrt(max(area, 1.0) / np.pi)))
-        y0 = max(0, cy - radius)
-        y1 = min(rain_matrix.shape[0], cy + radius + 1)
-        x0 = max(0, cx - radius)
-        x1 = min(rain_matrix.shape[1], cx + radius + 1)
-
-        local = rain_matrix[y0:y1, x0:x1] >= 0.5
-        mask[y0:y1, x0:x1][local] = 1
-        cell["_cached_mask"] = mask
-        return mask
+        return float(np.clip(
+            0.8 * recent_area_trend + 0.2 * tracked_cell.get("volume_trend", 1.0),
+            0.90, 1.14,
+        ))
 
     @staticmethod
     def translate_mask(mask: np.ndarray, shift_y: float, shift_x: float) -> np.ndarray:
-        """Translateaza o masca binara cu (shift_y, shift_x) pixeli."""
         shifted = np.zeros_like(mask, dtype=np.uint8)
         src_y, src_x = np.where(mask > 0)
         dst_y = np.rint(src_y + shift_y).astype(int)
@@ -305,123 +233,3 @@ class StormTracker:
         )
         shifted[dst_y[valid], dst_x[valid]] = 1
         return shifted
-
-    # -----------------------------------------------------------------------
-    # Utilitare interne
-    # -----------------------------------------------------------------------
-    @staticmethod
-    def _instantiate_kalman_filter(initial_y: float, initial_x: float) -> KalmanFilter:
-        """Creeaza un Kalman Filter 4D (x, y, vx, vy) pentru urmarirea centroidului."""
-        kf = KalmanFilter(dim_x=4, dim_z=2)
-        kf.x = np.array([[initial_x], [initial_y], [0.0], [0.0]])
-        kf.F = np.array([
-            [1.0, 0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ])
-        kf.H = np.array([
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-        ])
-        kf.P *= 1.2
-        kf.Q = np.array([
-            [0.005, 0.0, 0.0, 0.0],
-            [0.0, 0.005, 0.0, 0.0],
-            [0.0, 0.0, 0.02, 0.0],
-            [0.0, 0.0, 0.0, 0.02],
-        ])
-        kf.R = np.array([
-            [10.0, 0.0],
-            [0.0, 10.0],
-        ])
-        return kf
-
-    @staticmethod
-    def _compute_optical_flow(previous_rain: np.ndarray | None, current_rain: np.ndarray) -> np.ndarray | None:
-        """Calculeaza campul de advectie dense (Farneback) intre doua cadre consecutive."""
-        if previous_rain is None or previous_rain.shape != current_rain.shape:
-            return None
-
-        # OpenCV are nevoie de imagini pe 8 biti normalizate
-        prev_img = np.clip(previous_rain * 10, 0, 255).astype(np.uint8)
-        curr_img = np.clip(current_rain * 10, 0, 255).astype(np.uint8)
-
-        # Optimizare: reducem la jumatate rezolutia pt viteza Farneback (de 4x mai putini pixeli)
-        h, w = prev_img.shape
-        prev_small = cv2.resize(prev_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
-        curr_small = cv2.resize(curr_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
-
-        flow_small = cv2.calcOpticalFlowFarneback(
-            prev_small, curr_small, None,
-            pyr_scale=0.5, levels=3, winsize=15,
-            iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
-        )
-
-        # Scalam vectorii de flow inapoi la rezolutia originala si le dublam magnitudinea
-        flow_full = cv2.resize(flow_small, (w, h), interpolation=cv2.INTER_LINEAR)
-        return flow_full * 2.0
-
-    @staticmethod
-    def _mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
-        """Intersection over Union intre doua masti binare."""
-        if mask_a.shape != mask_b.shape:
-            return 0.0
-
-        intersection = np.logical_and(mask_a > 0, mask_b > 0).sum()
-        union = np.logical_or(mask_a > 0, mask_b > 0).sum()
-        if union == 0:
-            return 0.0
-        return float(intersection / union)
-
-    @staticmethod
-    def _predict_mask_shape(
-        mask: np.ndarray | None,
-        center_y: float, center_x: float,
-        shift_y: float, shift_x: float,
-        scale_factor: float,
-    ) -> np.ndarray | None:
-        """Prezice forma viitoare a mastii prin Extrapolare Semi-Lagrangiana + scalare."""
-        if mask is None or np.sum(mask) == 0:
-            return mask
-
-        h, w = mask.shape
-        
-        # 1. Cream grila de coordonate (cu cache)
-        if (h, w) not in _mgrid_cache:
-            _mgrid_cache[(h, w)] = np.mgrid[0:h, 0:w].astype(np.float32)
-        y_coords, x_coords = _mgrid_cache[(h, w)]
-        
-        # 2. Semi-Lagrangian: tragem pixelii din urma vectorului
-        map_x = (x_coords - shift_x).astype(np.float32)
-        map_y = (y_coords - shift_y).astype(np.float32)
-        
-        warped = cv2.remap(
-            mask.astype(np.float32), map_x, map_y, 
-            interpolation=cv2.INTER_LINEAR, 
-            borderMode=cv2.BORDER_CONSTANT, borderValue=0
-        )
-        
-        # 3. Aplicam transformarea afina doar pentru scaling (Growth/Decay)
-        if abs(scale_factor - 1.0) > 1e-4:
-            matrix = np.array([
-                [scale_factor, 0.0, (1.0 - scale_factor) * center_x],
-                [0.0, scale_factor, (1.0 - scale_factor) * center_y],
-            ], dtype=np.float32)
-            
-            warped = cv2.warpAffine(
-                warped, matrix, (w, h),
-                flags=cv2.INTER_LINEAR, borderValue=0,
-            )
-            
-        return (warped > 0.3).astype(np.uint8)
-
-    @staticmethod
-    def _calculate_distance(y1: float, x1: float, y2: float, x2: float) -> float:
-        """Distanta euclidiana intre doua puncte (y, x)."""
-        return float(np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2))
-
-    @staticmethod
-    def _adaptive_match_radius(area_pixels: float) -> float:
-        """Raza adaptiva de matching bazata pe aria celulei."""
-        return float(np.clip(10.0 + np.sqrt(max(area_pixels, 1.0)) * 0.9, 14.0, 32.0))

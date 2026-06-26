@@ -1,4 +1,5 @@
 """Constructia structurii UI (sidebar + continut). Stilurile dark traiesc in assets/custom.css."""
+import uuid
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
@@ -98,63 +99,57 @@ class DashboardLayout:
     @staticmethod
     def _ingestion_section() -> list:
         return [
-            html.H6("Ingestie Date Istorice", className="fw-bold"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Label("Data Start", className="small text-light mb-1"),
-                    dbc.Input(id="start-date", type="date", value="2026-06-13",
-                              className="bg-dark text-light border-secondary", size="sm")
-                ], width=6, className="pe-1"),
-                dbc.Col([
-                    dbc.Label("Data Stop", className="small text-light mb-1"),
-                    dbc.Input(id="end-date", type="date", value="2026-06-14",
-                              className="bg-dark text-light border-secondary", size="sm")
-                ], width=6, className="ps-1"),
-            ], className="mb-2"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Label("Ora Start", className="small text-light"),
-                    dbc.Input(id="start-hour", type="number", min=0, max=23, value=22, size="sm",
-                              className="bg-dark text-light border-secondary")
+            html.Div([
+                html.H6("Achiziție Date Istorice", className="fw-bold"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Data Start", className="small text-light"),
+                        dcc.DatePickerSingle(
+                            id="start-date", date=DEFAULT_TIME_RANGE["start"].split("T")[0],
+                            display_format="YYYY-MM-DD", className="mb-2 d-block bg-dark"
+                        )
+                    ]),
+                    dbc.Col([
+                        dbc.Label("Data Stop", className="small text-light"),
+                        dcc.DatePickerSingle(
+                            id="end-date", date=DEFAULT_TIME_RANGE["end"].split("T")[0],
+                            display_format="YYYY-MM-DD", className="mb-2 d-block bg-dark"
+                        )
+                    ]),
                 ]),
-                dbc.Col([
-                    dbc.Label("Ora Stop", className="small text-light"),
-                    dbc.Input(id="end-hour", type="number", min=0, max=23, value=23, size="sm",
-                              className="bg-dark text-light border-secondary")
-                ]),
-            ], className="mb-3"),
-            dbc.Button("Validează & Descarcă", id="btn-download", color="light", outline=True,
-                       className="w-100 mb-3", size="sm", style={"fontWeight": "bold"}),
-            dcc.Loading(
-                id="loading-download", type="circle", color="#0dcaf0",
-                children=html.Div(id="download-status", className="small text-success mb-3 fw-bold"),
-            ),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Ora Start", className="small text-light"),
+                        dbc.Input(id="start-hour", type="number", min=0, max=23, value=22, size="sm",
+                                  className="bg-dark text-light border-secondary")
+                    ]),
+                    dbc.Col([
+                        dbc.Label("Ora Stop", className="small text-light"),
+                        dbc.Input(id="end-hour", type="number", min=0, max=23, value=23, size="sm",
+                                  className="bg-dark text-light border-secondary")
+                    ]),
+                ], className="mb-3"),
+                dbc.Button("Validează & Descarcă", id="btn-download", color="light", outline=True,
+                           className="w-100 mb-3", size="sm", style={"fontWeight": "bold"}),
+                dcc.Loading(
+                    id="loading-download", type="circle", color="#0dcaf0",
+                    children=html.Div(id="download-status", className="small text-success mb-3 fw-bold"),
+                ),
+            ], id="historic-controls-container")
         ]
 
     def _time_section(self) -> list:
         initial_max = max(len(self._store.filtered(DEFAULT_TIME_RANGE, "historic")) - 1, 0)
         return [
-            html.Div(
-                [
-                    html.H6("Control Timp", className="fw-bold mb-0", style={"margin-right": "5px"}),
-                    # Spinner mic la dreapta titlului, vizibil cat timp callback-ul principal
-                    # genereaza o imagine noua (sentinel-ul e output, deci Dash il marcheaza "loading").
-                    # borderWidth subtire -> inel circular curat.
-                    dbc.Spinner(
-                        html.Div(id="img-loading-sentinel"),
-                        size="sm", color="info", type="border",
-                        spinner_style={"width": "1rem", "height": "1rem", "borderWidth": "0.15rem"},
-                    ),
-                ],
-                className="d-flex align-items-center gap-2 mb-2",
-            ),
+            html.H6("Control Timp", className="fw-bold"),
             dbc.Label(id="frame-label", children="Cadru Selectat: N/A", className="fw-bold text-light"),
             dcc.Slider(0, initial_max, 1, value=0, marks={}, id="frame-slider", className="mb-3"),
-            dbc.Row([
-                dbc.Col(dbc.Button("Play/Pauză", id="btn-play", color="success", outline=True, className="w-100 fw-bold")),
-                dbc.Col(dbc.Button("Reset", id="btn-reset", color="danger", outline=True, className="w-100 fw-bold")),
-            ]),
-            html.Small(id="warmup-status", className="text-info d-block mt-2", style={"minHeight": "1.2rem"}),
+            html.Div([
+                dbc.Row([
+                    dbc.Col(dbc.Button("Play/Pauză", id="btn-play", color="success", outline=True, className="w-100 fw-bold")),
+                    dbc.Col(dbc.Button("Reset", id="btn-reset", color="danger", outline=True, className="w-100 fw-bold")),
+                ])
+            ], id="playback-controls-container"),
         ]
 
     @staticmethod
@@ -164,7 +159,7 @@ class DashboardLayout:
             dcc.Store(id="is-processing", data=False),
             dcc.Store(id="active-time-range", data=DEFAULT_TIME_RANGE),
             dcc.Interval(id="live-polling-interval", interval=15 * 60 * 1000, n_intervals=0, disabled=True),
-            dcc.Interval(id="warmup-poll", interval=1000, n_intervals=0),
+            dcc.Store(id="session-id", data=str(uuid.uuid4().hex)),
         ]
 
     # ---- content -----------------------------------------------------------
@@ -183,15 +178,15 @@ class DashboardLayout:
                 dbc.Row([
                     dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
                     dbc.Col(self._metric_card("Aport Curent (15m)", "val-current-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Anticipat (Viitor)", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Anticipat (Rata/15m)", "val-predicted-vol", "info", "info")),
                     dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
-                html.H4("Metrici (CSI/FAR/POD)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                html.H4("Performanță Predicție (CSI/FAR/POD/FSS)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
-                    dbc.Col(self._metric_card("Ultimele 15 minute", "val-metrics-15m", "success", "success")),
-                    dbc.Col(self._metric_card("Ultima oră", "val-metrics-1h", "success", "success")),
-                    dbc.Col(self._metric_card("Ultimele 3 ore", "val-metrics-3h", "success", "success")),
-                    dbc.Col(self._metric_card("Total", "val-metrics-total", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +30 min", "val-metrics-15m", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +1 oră", "val-metrics-1h", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +2 ore", "val-metrics-3h", "success", "success")),
+                    dbc.Col(self._metric_card("Scor Mediu", "val-metrics-total", "success", "success")),
                 ], className="mb-4"),
                 html.H4("Celule", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([

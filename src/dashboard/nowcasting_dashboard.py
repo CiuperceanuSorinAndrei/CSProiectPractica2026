@@ -1,55 +1,45 @@
 """Aplicatia Dash: detine orchestrator-ul, serviciul de date, starea si callbacks."""
 import os
-import io
-import base64
 from datetime import datetime as dt
 
-import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Backend non-interactiv pentru viteza si stabilitate in server
-import matplotlib.pyplot as plt
+matplotlib.use('Agg')
 
 import dash
-from dash import html, Input, Output, State
+from dash import Input, Output, State
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
-from orchestrator import Orchestrator, ServerBusy
 from src.io.cloud_data_service import CloudDataService
 from src.ui_helpers.plotting import StormMapPlotter
-from config import PREDEFINED_LOCATIONS, RAIN_VMAX, RAIN_THRESHOLD_MIN, BASE_DIR
+from config import PREDEFINED_LOCATIONS, BASE_DIR
 
-from src.dashboard.constants import (
-    DATA_DIR, MANUAL_LOCATION,
-    MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT,
-    ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT,
-)
+from src.dashboard.constants import DATA_DIR, MANUAL_LOCATION, DEFAULT_TIME_RANGE
 from src.dashboard.frame_store import FrameStore
-from src.dashboard.frame_history import FrameHistory
 from src.dashboard.dashboard_layout import DashboardLayout
+from src.dashboard.session_manager import SessionManager
+from src.dashboard.report_builder import ReportBuilder
 
 
 class NowcastingDashboard:
-    """Aplicatia Dash: detine orchestrator-ul, serviciul de date, starea si callbacks."""
+    """Aplicatia Dash simplificata."""
 
     def __init__(self):
         self._store = FrameStore(DATA_DIR)
-        self._history = FrameHistory()
-        self._orch = Orchestrator()
         self._data_service = CloudDataService()
+        self._session_manager = SessionManager()
 
-        # assets_folder pointat explicit la folderul assets din radacina proiectului
-        # (aplicatia traieste in src/dashboard/, deci default-ul Dash nu l-ar gasi).
         self.app = dash.Dash(
             __name__,
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
-            # Nu inlocui titlul cu "Updating..." la fiecare callback: altfel poll-ul de progres
-            # al warm-up-ului (la fiecare secunda) face titlul sa palpaie continuu.
-            update_title=None,
         )
         self.app.title = "Estimarea volumului de precipitatii"
-        self.app.layout = DashboardLayout(self._store).build()
+        
+        def serve_layout():
+            return DashboardLayout(self._store).build()
+            
+        self.app.layout = serve_layout
         self._register_callbacks()
 
     @property
@@ -60,7 +50,12 @@ class NowcastingDashboard:
         print("Pornește serverul Dash... Deschide http://127.0.0.1:8050 în browser!")
         self.app.run(debug=debug, port=port)
 
-    # ---- callback registration --------------------------------------------
+    # ---- callbacks --------------------------------------------------------
+    def _toggle_ui_elements(self, run_mode):
+        if run_mode == "live":
+            return {"display": "none"}, {"display": "none"}
+        return {"display": "block"}, {"display": "block"}
+
     def _register_callbacks(self) -> None:
         app = self.app
 
@@ -105,8 +100,16 @@ class NowcastingDashboard:
             Output("frame-slider", "value", allow_duplicate=True),
             Input("live-polling-interval", "n_intervals"),
             Input("run-mode-select", "value"),
+            State("frame-slider", "value"),
+            State("frame-slider", "max"),
             prevent_initial_call=True,
         )(self._poll_live_data)
+
+        app.callback(
+            Output("historic-controls-container", "style"),
+            Output("playback-controls-container", "style"),
+            Input("run-mode-select", "value")
+        )(self._toggle_ui_elements)
 
         app.callback(
             Output("download-status", "children"),
@@ -114,8 +117,8 @@ class NowcastingDashboard:
             Output("frame-slider", "value", allow_duplicate=True),
             Output("active-time-range", "data"),
             Input("btn-download", "n_clicks"),
-            State("start-date", "value"),
-            State("end-date", "value"),
+            State("start-date", "date"),
+            State("end-date", "date"),
             State("start-hour", "value"),
             State("end-hour", "value"),
             prevent_initial_call=True,
@@ -140,7 +143,6 @@ class NowcastingDashboard:
             Output("input-warnings", "children"),
             Output("map-zoom-slider", "value"),
             Output("roi-radius-slider", "value"),
-            Output("img-loading-sentinel", "children"),  # tine spinner-ul aprins cat ruleaza callback-ul
             Input("frame-slider", "value"),
             Input("location-select", "value"),
             Input("manual-lat", "value"),
@@ -149,18 +151,15 @@ class NowcastingDashboard:
             Input("roi-radius-slider", "value"),
             State("run-mode-select", "value"),
             State("active-time-range", "data"),
+            State("session-id", "data"),
         )(self._update_dashboard)
 
         app.callback(
             Output("frame-slider", "value", allow_duplicate=True),
             Input("btn-reset", "n_clicks"),
+            State("session-id", "data"),
             prevent_initial_call=True,
         )(self._handle_reset)
-
-        app.callback(
-            Output("warmup-status", "children"),
-            Input("warmup-poll", "n_intervals"),
-        )(self._update_warmup_status)
 
     # ---- simple callbacks --------------------------------------------------
     @staticmethod
@@ -173,43 +172,42 @@ class NowcastingDashboard:
 
     @staticmethod
     def _auto_advance_frame(n, is_processing, current_frame, max_frame):
-        # Daca serverul inca proceseaza un cadru, sarim peste acest tick (evita blocaje/sarituri).
         if is_processing:
             raise PreventUpdate
         if current_frame < max_frame:
             return current_frame + 1, True, dash.no_update
-        # La final, oprim intervalul ca raportul sa poata fi citit
         return current_frame, False, True
 
     @staticmethod
     def _toggle_live_mode(mode):
         is_live = (mode == "live")
-        # primul output e live-polling-interval (activ in LIVE); restul sunt controale istorice (dezactivate in LIVE)
-        return not is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live, is_live
+        return not is_live, is_live, is_live, False, is_live, is_live, is_live, is_live, is_live
 
-    def _poll_live_data(self, n_int, mode):
+    def _poll_live_data(self, n_int, mode, current_val, current_max):
         if mode != "live":
             raise PreventUpdate
         self._data_service.fetch_latest()
-        files = self._store.list()
+        files = self._store.filtered(time_range=None, run_mode="live")
         if not files:
             raise PreventUpdate
-        max_idx = len(files) - 1
-        return max_idx, max_idx
+        
+        new_max = len(files) - 1
+        
+        ctx = dash.callback_context
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
-    def _handle_reset(self, n_clicks):
+        if triggered_id == "run-mode-select":
+            return new_max, new_max
+        
+        if current_val is not None and current_max is not None and current_val < current_max:
+            return new_max, dash.no_update
+        return new_max, new_max
+
+    def _handle_reset(self, n_clicks, session_id):
         if n_clicks:
-            self._orch.reset_tracking()
-            self._history.reset()
+            self._session_manager.reset_session(session_id)
             return 0
         return dash.no_update
-
-    def _update_warmup_status(self, _n):
-        """Afiseaza progresul pre-incarcarii in fundal; gol cand nu ruleaza / s-a terminat."""
-        done, total = self._orch.warm_status()
-        if total <= 0 or done >= total:
-            return ""
-        return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
 
     def _download_historic(self, n, start_d, end_d, start_h, end_h):
         if not start_d or not end_d:
@@ -238,233 +236,92 @@ class NowcastingDashboard:
         return msg, max(len(filtered) - 1, 0), 0, time_range
 
     # ---- main dashboard callback ------------------------------------------
-    def _update_dashboard(self, frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, run_mode, time_range):
-        map_zoom, radius_km, warnings = self._validate_view_inputs(map_zoom, radius_km)
-
-        nc_files = self._store.filtered(time_range, run_mode)
-        if not nc_files:
-            return self._no_data_response()
-
-        frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
-        label = FrameStore.label(nc_files[frame_idx])
-        center = self._resolve_center(loc_choice, m_lat, m_lon)
-        bbox = self._compute_bbox(center, map_zoom)
-
-        result = self._process_to_frame(frame_idx, nc_files, bbox, center, radius_km)
-        if result is None:
-            return self._error_response(label)
-
-        # Cadrul curent a stabilit geometria; pre-incarcam restul intervalului in fundal (doar
-        # istoric) ca salturile reci ulterioare sa devina rapide. Idempotent + cedeaza prioritate.
-        if run_mode == "live":
-            self._orch.stop_warmup()
-        else:
-            lon_min, lon_max, lat_min, lat_max = bbox
-            center_lat, center_lon = center
-            self._orch.start_warmup(
-                [self._store.path(f) for f in nc_files],
-                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
-            )
-
-        title = f"🔴 LIVE NOWCAST: {label} UTC" if run_mode == "live" else f"{label} UTC"
-        src = self._render_map(result, bbox, center, radius_km, title)
-        diagnostics = self._build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, metrics, tracked, in_roi = self._format_metrics(result)
-        lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
-        final_report = self._build_final_report(run_mode, frame_idx, len(nc_files))
-
-        m_15m, m_1h, m_3h, m_total = self._metric_windows(metrics)
-        return (src, hist_vol, curr_vol, pred_vol, max_rain,
-                m_15m, m_1h, m_3h, m_total, tracked, in_roi,
-                lbl_frame, final_report, diagnostics, False, warnings, map_zoom, radius_km, "")
-
-    # ---- update_dashboard helpers -----------------------------------------
-    def _process_to_frame(self, frame_idx, nc_files, bbox, center, radius_km):
-        """Proceseaza cadrul curent gestionand starea: avans consecutiv (acumuleaza),
-        acelasi cadru (doar re-randare), sau salt (proceseaza cadrele omise). Returneaza
-        FrameResult sau None (eroare/server ocupat)."""
-        lon_min, lon_max, lat_min, lat_max = bbox
-        center_lat, center_lon = center
-
-        def run(idx):
-            return self._orch.process_frame(
-                self._store.path(nc_files[idx]),
-                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
-            )
-
-        hist = self._history
-        is_consecutive = (frame_idx == hist.last_frame_idx + 1)
-        is_same_frame = (frame_idx == hist.last_frame_idx)
-
-        try:
-            if is_consecutive:
-                result = run(frame_idx)
-                if result is None:
-                    raise PreventUpdate
-                hist.accumulate(result)
-            elif is_same_frame:
-                # Zoom/rază schimbate: reprocesăm pentru vizualizare, dar NU atingem istoricul.
-                result = run(frame_idx)
-                if result is None:
-                    raise PreventUpdate
-            else:
-                # Salt: procesăm cadrele omise (înainte) pentru a păstra continuitatea volumului.
-                for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
-                    inter = run(i)
-                    if inter:
-                        hist.accumulate(inter)
-                result = run(frame_idx)
-                if result is None:
-                    return None
-                hist.accumulate(result)
-        except ServerBusy:
-            # Alt cadru se proceseaza deja (lock ocupat). E o stare tranzitorie, nu o eroare:
-            # sarim peste acest update (la fel ca branch-urile consecutiv/acelasi cadru), in loc
-            # sa afisam "Eroare". Cererea care detine lock-ul va actualiza interfata.
-            raise PreventUpdate
-
-        hist.last_frame_idx = frame_idx
-        return result
-
-    @staticmethod
-    def _validate_view_inputs(map_zoom, radius_km):
+    def _update_dashboard(
+        self, frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
+    ):
+        import numpy as np
+        from src.dashboard.constants import MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT, ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT
         raw_zoom, raw_radius = map_zoom, radius_km
         zoom = min(max(map_zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX) if map_zoom is not None else MAP_ZOOM_DEFAULT
         radius = min(max(radius_km, ROI_RADIUS_MIN), ROI_RADIUS_MAX) if radius_km is not None else ROI_RADIUS_DEFAULT
 
         warnings = []
         if raw_zoom is None:
-            warnings.append(dbc.Alert("Valoare invalidă pentru Arie. S-a folosit valoarea implicită (500 km).",
-                                      color="danger", style={"padding": "0.5rem"}, className="small mb-2"))
+            warnings.append(dbc.Alert("Valoare invalidă pentru Arie. S-a folosit valoarea implicită (500 km).", color="danger", className="small mb-2"))
         elif raw_zoom > MAP_ZOOM_MAX or raw_zoom < MAP_ZOOM_MIN:
-            warnings.append(dbc.Alert(f"Aria introdusă ({raw_zoom} km) a fost respinsă. Valoarea maximă permisă este 700 km (minim 100 km).",
-                                      color="danger", style={"padding": "0.5rem"}, className="small mb-2 fw-bold"))
+            warnings.append(dbc.Alert(f"Aria introdusă ({raw_zoom} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
 
         if raw_radius is None:
-            warnings.append(dbc.Alert("Valoare invalidă pentru Rază. S-a folosit valoarea implicită (30 km).",
-                                      color="danger", style={"padding": "0.5rem"}, className="small mb-2"))
+            warnings.append(dbc.Alert("Valoare invalidă pentru Rază. S-a folosit valoarea implicită (30 km).", color="danger", className="small mb-2"))
         elif raw_radius > ROI_RADIUS_MAX or raw_radius < ROI_RADIUS_MIN:
-            warnings.append(dbc.Alert(f"Raza introdusă ({raw_radius} km) a fost respinsă. Valoarea maximă permisă este 200 km (minim 5 km).",
-                                      color="danger", style={"padding": "0.5rem"}, className="small mb-2 fw-bold"))
+            warnings.append(dbc.Alert(f"Raza introdusă ({raw_radius} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
 
-        return zoom, radius, warnings
+        nc_files = self._store.filtered(tr_data, run_mode)
+        if not nc_files:
+            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", 
+                    "Fără date", None, None, False, warnings, zoom, radius)
 
-    @staticmethod
-    def _resolve_center(loc_choice, m_lat, m_lon):
+        frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
+        label = FrameStore.label(nc_files[frame_idx])
+        
         if loc_choice == MANUAL_LOCATION:
-            return float(m_lat), float(m_lon)
-        cfg = PREDEFINED_LOCATIONS[loc_choice]
-        return float(cfg["lat"]), float(cfg["lon"])
-
-    @staticmethod
-    def _compute_bbox(center, map_zoom):
+            center = (float(m_lat), float(m_lon))
+        else:
+            cfg = PREDEFINED_LOCATIONS[loc_choice]
+            center = (float(cfg["lat"]), float(cfg["lon"]))
+            
         center_lat, center_lon = center
-        delta_lat = map_zoom / 111.0
-        delta_lon = map_zoom / (111.0 * np.cos(np.radians(center_lat)))
-        return (center_lon - delta_lon, center_lon + delta_lon,
-                center_lat - delta_lat, center_lat + delta_lat)
+        delta_lat = zoom / 111.0
+        delta_lon = zoom / (111.0 * np.cos(np.radians(center_lat)))
+        bbox = (center_lon - delta_lon, center_lon + delta_lon, center_lat - delta_lat, center_lat + delta_lat)
 
-    @staticmethod
-    def _render_map(result, bbox, center, radius_km, title) -> str:
+        from orchestrator import ServerBusy
+        try:
+            result = self._session_manager.process_to_frame(
+                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self._store
+            )
+        except ServerBusy:
+            from dash.exceptions import PreventUpdate
+            raise PreventUpdate
+        
+        if result is None:
+            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", 
+                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius)
+
+        title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
+        
+        # Plot map
         fig, ax, _ = StormMapPlotter.create_figure(
-            result.lon_grid, result.lat_grid, result.rain_rate_masked,
-            extent=bbox, vmin=RAIN_THRESHOLD_MIN, vmax=RAIN_VMAX, title=title,
-            roi_center=center, roi_radius_km=radius_km,
+            lon_grid=result.lon_grid,
+            lat_grid=result.lat_grid,
+            rain_rate_masked=result.rain_rate_masked,
+            extent=bbox,
+            title=title,
+            roi_center=center,
+            roi_radius_km=radius
         )
-        StormMapPlotter.draw_overlays(ax, result.tracked_cells, result.lon_grid, result.lat_grid)
-
+        StormMapPlotter.draw_overlays(
+            ax=ax,
+            tracked_cells=result.tracked_cells,
+            lon_grid=result.lon_grid,
+            lat_grid=result.lat_grid
+        )
+        import io
+        import base64
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
-        plt.close(fig)
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=100, facecolor='#212529')
         buf.seek(0)
-        return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
+        encoded = base64.b64encode(buf.read()).decode("ascii")
+        src = f"data:image/png;base64,{encoded}"
+        import matplotlib.pyplot as plt
+        plt.close(fig)
 
-    @staticmethod
-    def _build_diagnostics(tracked_cells) -> html.Div:
-        diag_rows = []
-        for cell in tracked_cells:
-            vt = cell.get("volume_trend", 1.0)
-            stare = "Extindere" if vt > 1.12 else "Disipare" if vt < 0.88 else "Stabil"
-            err = f"{cell.get('prediction_error_pixels', 0.0):.1f} px" if cell["is_tracked"] else "Nou"
-            diag_rows.append(html.Tr([
-                html.Td(cell["cell_id"]),
-                html.Td(f"{cell['geo_lat']:.2f}, {cell['geo_lon']:.2f}"),
-                html.Td(str(cell.get("area_pixels", 0))),
-                html.Td(err),
-                html.Td(stare),
-            ]))
+        # Reports
+        diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
+        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self._session_manager)
+        lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
+        final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self._session_manager)
 
-        diag_table = dbc.Table(
-            [
-                html.Thead(html.Tr([
-                    html.Th("ID Sistem"), html.Th("Locație"), html.Th("Arie (px)"),
-                    html.Th("Eroare Centroid"), html.Th("Evoluție"),
-                ])),
-                html.Tbody(diag_rows),
-            ],
-            bordered=True, hover=True, size="sm", className="table-dark mb-0",
-        )
-
-        return html.Div([
-            html.H6("Diagnostic Corelat", className="fw-bold text-muted mb-2"),
-            html.Div(diag_table, style={"maxHeight": "250px", "overflowY": "auto",
-                                        "border": "1px solid var(--c-border)", "borderRadius": "5px"}),
-        ], className="mb-4")
-
-    def _format_metrics(self, result):
-        hist_vol = f"{self._history.total_volume_m3 / 1000.0:.2f} mii m³"
-        curr_vol = f"{result.roi_volume_m3 / 1000.0:.2f} mii m³"
-        pred_vol = f"{result.predicted_roi_volume_m3 / 1000.0:.2f} mii m³"
-        max_rain = f"{result.max_rain:.2f}"
-        metrics_total = (f"{result.global_csi:.2f} / {result.global_far:.2f} / {result.global_pod:.2f}"
-                         if result.global_csi is not None else "N/A (Fără ploaie)")
-        tracked = f"{result.num_tracked}"
-        in_roi = f"{sum(1 for c in result.tracked_cells if c.get('in_roi'))}"
-        return hist_vol, curr_vol, pred_vol, max_rain, metrics_total, tracked, in_roi
-
-    # Siruri CSI/FAR/POD pe ferestre temporale: 15min = cadrul curent, 1h = 4 cadre,
-    # 3h = 12 cadre, total = tot istoricul. Cadrele sunt la 15 minute.
-    def _metric_windows(self, current_metrics: str) -> tuple[str, str, str, str]:
-        def fmt(w):
-            if w is None:
-                return "N/A"
-            csi, far, pod = w
-            return f"{csi:.2f} / {far:.2f} / {pod:.2f}"
-        return (
-            current_metrics,
-            fmt(self._history.window(4)),
-            fmt(self._history.window(12)),
-            fmt(self._history.window(None)),
-        )
-
-    def _build_final_report(self, run_mode, frame_idx, n_files):
-        if run_mode == "live" or frame_idx != n_files - 1:
-            return ""
-        avg_csi, avg_far, avg_pod = self._history.averages()
-        return dbc.Alert(
-            [
-                html.H4("Simulare Istorică Încheiată", className="alert-heading"),
-                html.P("Raport de Performanță al Algoritmului pentru intervalul analizat:"),
-                html.Hr(),
-                dbc.Row([
-                    dbc.Col(html.Strong(f"Volum Total Precipitat (Bazin): {self._history.total_volume_m3 / 1000.0:.0f} mii m³")),
-                    dbc.Col(html.Strong(f"Acuratețe Detecție (CSI): {avg_csi:.2f}")),
-                    dbc.Col(html.Strong(f"Rată Alarme False (FAR): {avg_far:.2f}")),
-                    dbc.Col(html.Strong(f"Probabilitate Detecție (POD): {avg_pod:.2f}")),
-                ]),
-            ],
-            color="success",
-        )
-
-    # ---- canned responses --------------------------------------------------
-    @staticmethod
-    def _no_data_response():
-        return ("", "0.00", "0.00", "0.00", "0.0",
-                "N/A", "N/A", "N/A", "N/A", "0", "0", "Fără Date", "", "",
-                False, dash.no_update, dash.no_update, dash.no_update, "")
-
-    @staticmethod
-    def _error_response(label):
-        return ("", "Eroare", "Eroare", "Eroare", "Eroare",
-                "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
-                f"Eroare fisier {label}", "", "", False, dash.no_update, dash.no_update, dash.no_update, "")
+        return (src, hist_vol, curr_vol, pred_vol, max_rain,
+                m_30m, m_1h, m_2h, m_tot, tracked, in_roi,
+                lbl_frame, final_report, diagnostics, False, warnings, zoom, radius)

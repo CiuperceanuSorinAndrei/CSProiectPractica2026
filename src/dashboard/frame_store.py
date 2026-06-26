@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime as dt
 
@@ -12,9 +14,16 @@ class FrameStore:
         return sorted(f for f in os.listdir(self._dir) if f.endswith(".nc"))
 
     def filtered(self, time_range: dict | None, run_mode: str = "historic") -> list[str]:
-        """Cadrele din interval; in modul LIVE (sau fara interval) returneaza tot."""
+        """Cadrele din interval; in modul LIVE returneaza doar cadrele din ziua curenta."""
         files = self.list()
-        if run_mode == "live" or not time_range:
+        if run_mode == "live":
+            today = dt.utcnow().date()
+            return [
+                f for f in files
+                if (f_dt := self._file_datetime(f)) is not None and f_dt.date() == today
+            ]
+        
+        if not time_range:
             return files
 
         try:

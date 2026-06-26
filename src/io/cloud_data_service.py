@@ -16,10 +16,11 @@ class CloudDataService:
     deja prezente local, deci re-descarcarea unui interval este ieftina.
     """
 
-    _ftp_client: FtpClient = FtpClient(
-        FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER,
-        timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
-    )
+    def __init__(self):
+        self._ftp_client = FtpClient(
+            FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER,
+            timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
+        )
 
     # Descarca toate cadrele (la 15 min) din intervalul [start_dt, end_dt].
     # Returneaza numarul de fisiere noi descarcate (cele deja locale sunt sarite).
@@ -42,29 +43,37 @@ class CloudDataService:
     def fetch_latest(self) -> str | None:
         self._ftp_client.connect()
         try:
-            # Pornim de la ora curenta UTC, rotunjita in jos la cel mai apropiat 15 minute
+            # Deterministic fallback instead of nlst() block
             now = datetime.datetime.now(datetime.timezone.utc)
-            minute_rounded = (now.minute // 15) * 15
-            search_time = now.replace(minute=minute_rounded, second=0, microsecond=0)
+            minute = (now.minute // 15) * 15
+            search_time = now.replace(minute=minute, second=0, microsecond=0)
+            
+            latest_file = None
+            for step in range(5):  # Verificam pana la 1 ora in urma (H-SAF are uneori lag)
+                test_time = search_time - timedelta(minutes=15 * step)
+                filename = self._h60_filename(test_time)
+                if self._ftp_client.file_size(filename) is not None:
+                    latest_file = filename
+                    search_time = test_time
+                    break
+                    
+            if not latest_file:
+                return None
+                
+            final_nc_path = os.path.join(DATA_RAW_DIR, latest_file[:-3])
+            
+            if os.path.exists(final_nc_path):
+                # Desi e local, trebuie sa ne asiguram ca avem istoricul flow-ului complet
+                self._download_flow_history(search_time)
+                return final_nc_path
 
-            # Cautam inapoi pana la 12 cadre (3 ore) pentru ultima procesare disponibila
-            for _ in range(12):
-                filename = self._h60_filename(search_time)
-                final_nc_path = os.path.join(DATA_RAW_DIR, filename[:-3])
-
-                # Daca exista deja local, suntem la zi
-                if os.path.exists(final_nc_path):
-                    return final_nc_path
-
-                # SIZE este mai rapid decat nlst()/RETR pentru a verifica existenta
-                if self._ftp_client.file_size(filename):
-                    path = self._ftp_client.fetch_file(filename)
-                    if path:
-                        self._download_flow_history(search_time)
-                    return path
-
-                search_time -= timedelta(minutes=15)
-
+            # Altfel il descarcam
+            path = self._ftp_client.fetch_file(latest_file)
+            if path:
+                self._download_flow_history(search_time)
+            return path
+        except Exception as e:
+            print(f"Eroare LIVE: {e}")
             return None
         finally:
             self._ftp_client.disconnect()
