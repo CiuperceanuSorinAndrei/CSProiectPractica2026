@@ -141,7 +141,20 @@ class DashboardLayout:
     def _time_section(self) -> list:
         initial_max = max(len(self._store.filtered(DEFAULT_TIME_RANGE, "historic")) - 1, 0)
         return [
-            html.H6("Control Timp", className="fw-bold"),
+            html.Div(
+                [
+                    html.H6("Control Timp", className="fw-bold mb-0", style={"margin-right": "5px"}),
+                    # Spinner mic la dreapta titlului, vizibil cat timp callback-ul principal
+                    # genereaza o imagine noua (sentinel-ul e output, deci Dash il marcheaza "loading").
+                    # borderWidth subtire -> inel circular curat.
+                    dbc.Spinner(
+                        html.Div(id="img-loading-sentinel"),
+                        size="sm", color="info", type="border",
+                        spinner_style={"width": "1rem", "height": "1rem", "borderWidth": "0.15rem"},
+                    ),
+                ],
+                className="d-flex align-items-center gap-2 mb-2",
+            ),
             dbc.Label(id="frame-label", children="Cadru Selectat: N/A", className="fw-bold text-light"),
             dcc.Slider(0, initial_max, 1, value=0, marks={}, id="frame-slider", className="mb-3"),
             html.Div([
@@ -150,6 +163,7 @@ class DashboardLayout:
                     dbc.Col(dbc.Button("Reset", id="btn-reset", color="danger", outline=True, className="w-100 fw-bold")),
                 ])
             ], id="playback-controls-container"),
+            html.Small(id="warmup-status", className="text-info d-block mt-2", style={"minHeight": "1.2rem"}),
         ]
 
     @staticmethod
@@ -160,6 +174,7 @@ class DashboardLayout:
             dcc.Store(id="active-time-range", data=DEFAULT_TIME_RANGE),
             dcc.Interval(id="live-polling-interval", interval=15 * 60 * 1000, n_intervals=0, disabled=True),
             dcc.Store(id="session-id", data=str(uuid.uuid4().hex)),
+            dcc.Interval(id="warmup-poll", interval=1000, n_intervals=0),
         ]
 
     # ---- content -----------------------------------------------------------

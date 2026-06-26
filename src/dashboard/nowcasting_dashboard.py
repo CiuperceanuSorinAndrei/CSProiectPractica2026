@@ -33,6 +33,9 @@ class NowcastingDashboard:
             __name__,
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
+            # Nu inlocui titlul cu "Updating..." la fiecare callback (ex. poll-ul de progres),
+            # altfel titlul paginii palpaie continuu.
+            update_title=None,
         )
         self.app.title = "Estimarea volumului de precipitatii"
         
@@ -143,6 +146,7 @@ class NowcastingDashboard:
             Output("input-warnings", "children"),
             Output("map-zoom-slider", "value"),
             Output("roi-radius-slider", "value"),
+            Output("img-loading-sentinel", "children"),  # tine spinner-ul aprins cat ruleaza callback-ul
             Input("frame-slider", "value"),
             Input("location-select", "value"),
             Input("manual-lat", "value"),
@@ -160,6 +164,12 @@ class NowcastingDashboard:
             State("session-id", "data"),
             prevent_initial_call=True,
         )(self._handle_reset)
+
+        app.callback(
+            Output("warmup-status", "children"),
+            Input("warmup-poll", "n_intervals"),
+            State("session-id", "data"),
+        )(self._update_warmup_status)
 
     # ---- simple callbacks --------------------------------------------------
     @staticmethod
@@ -208,6 +218,14 @@ class NowcastingDashboard:
             self._session_manager.reset_session(session_id)
             return 0
         return dash.no_update
+
+    def _update_warmup_status(self, _n, session_id):
+        """Progresul pre-incarcarii in fundal (warm-up); gol cand nu ruleaza / s-a terminat."""
+        orch, _ = self._session_manager.get_state(session_id)
+        done, total = orch.warm_status()
+        if total <= 0 or done >= total:
+            return ""
+        return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
 
     def _download_historic(self, n, start_d, end_d, start_h, end_h):
         if not start_d or not end_d:
@@ -258,8 +276,8 @@ class NowcastingDashboard:
 
         nc_files = self._store.filtered(tr_data, run_mode)
         if not nc_files:
-            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", 
-                    "Fără date", None, None, False, warnings, zoom, radius)
+            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+                    "Fără date", None, None, False, warnings, zoom, radius, "")
 
         frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
         label = FrameStore.label(nc_files[frame_idx])
@@ -285,8 +303,8 @@ class NowcastingDashboard:
             raise PreventUpdate
         
         if result is None:
-            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", 
-                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius)
+            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
+                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius, "")
 
         title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
         
@@ -324,4 +342,4 @@ class NowcastingDashboard:
 
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
                 m_30m, m_1h, m_2h, m_tot, tracked, in_roi,
-                lbl_frame, final_report, diagnostics, False, warnings, zoom, radius)
+                lbl_frame, final_report, diagnostics, False, warnings, zoom, radius, "")

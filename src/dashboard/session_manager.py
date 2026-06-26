@@ -53,10 +53,7 @@ class SessionManager:
             orch.reset_tracking()
             hist.reset()
             self._last_dataset_id[session_id] = dataset_id
-            
-            paths = [store.path(f) for f in nc_files]
-            orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
-            
+
             for i in range(0, frame_idx):
                 inter = run(i)
                 if inter:
@@ -64,6 +61,11 @@ class SessionManager:
             result = run(frame_idx)
             if result is not None:
                 hist.accumulate(result)
+
+            # Pornim warm-up-ul DUPA ce primul cadru a stabilit geometria (_geom_key); altfel
+            # thread-ul de warm-up vede _geom_key=None, esueaza verificarea si se opreste imediat.
+            paths = [store.path(f) for f in nc_files]
+            orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
         elif is_consecutive:
             result = run(frame_idx)
             if result is None:
