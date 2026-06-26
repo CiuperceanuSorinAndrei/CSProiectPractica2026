@@ -144,8 +144,8 @@ class NowcastingDashboard:
             Output("diagnostics-div", "children"),
             Output("is-processing", "data"),
             Output("input-warnings", "children"),
-            Output("map-zoom-slider", "value"),
-            Output("roi-radius-slider", "value"),
+            Output("map-zoom-input", "value"),
+            Output("roi-radius-input", "value"),
             Output("img-loading-sentinel", "children"),  # tine spinner-ul aprins cat ruleaza callback-ul
             Input("frame-slider", "value"),
             Input("location-select", "value"),
