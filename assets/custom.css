@@ -66,23 +66,41 @@
     box-shadow: 0 0 0 5px rgba(var(--c-info-rgb), 0.3) !important;
 }
 
-/* DatePickerRange — inputuri */
+/* DatePicker (Single + Range) — inputuri */
 .DateInput, .DateInput_1 { background-color: var(--c-surface-2) !important; }
 .DateInput_input, .DateInput_input_1, input.DateInput_input { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
-.DateRangePickerInput, .DateRangePickerInput_1 { background-color: var(--c-surface-2) !important; border: 1px solid var(--c-border) !important; border-radius: 4px; overflow: hidden; }
+.DateRangePickerInput, .DateRangePickerInput_1,
+.SingleDatePickerInput, .SingleDatePickerInput_1 { background-color: var(--c-surface-2) !important; border: 1px solid var(--c-border) !important; border-radius: 4px; overflow: hidden; }
 .DateRangePickerInput_arrow, .DateRangePickerInput_arrow_1 { background-color: var(--c-surface-2) !important; }
 .DateRangePickerInput_arrow_svg { fill: var(--c-text-strong) !important; }
+.SingleDatePickerInput_clearDate_svg, .DateRangePickerInput_clearDates_svg { fill: var(--c-text) !important; }
 
-/* DatePickerRange — popup calendar */
+/* DatePicker (Single + Range) — containerul popup-ului (fundal solid: altfel se vede continutul prin el) */
+.SingleDatePicker_picker, .SingleDatePicker_picker_1,
+.DateRangePicker_picker, .DateRangePicker_picker_1 { background-color: var(--c-bg) !important; }
 .DayPicker, .DayPicker_1 { background-color: var(--c-bg) !important; }
+.DayPicker__withBorder { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55) !important; border: 1px solid var(--c-border) !important; border-radius: 6px; }
+.DayPicker_transitionContainer, .DayPicker_transitionContainer_1 { background-color: var(--c-bg) !important; }
 .CalendarMonth, .CalendarMonth_1, .CalendarMonthGrid, .CalendarMonthGrid_1 { background-color: var(--c-bg) !important; }
 .CalendarMonth_caption, .CalendarMonth_caption_1 { color: var(--c-text-strong) !important; }
-.DayPickerNavigation_button__default, .DayPickerNavigation_button__default_1 { background-color: var(--c-surface-2) !important; }
+.CalendarMonth_caption select { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+
+/* antetul cu zilele saptamanii (Su Mo Tu ...) */
+.DayPicker_weekHeader, .DayPicker_weekHeader_1 { color: var(--c-text-muted) !important; }
+.DayPicker_weekHeader_li small { color: var(--c-text-muted) !important; }
+
+/* navigare luna */
+.DayPickerNavigation_button__default, .DayPickerNavigation_button__default_1 { background-color: var(--c-surface-2) !important; border: 1px solid var(--c-border) !important; }
 .DayPickerNavigation_svg__default { fill: var(--c-text-strong) !important; }
 .DayPickerKeyboardShortcuts_buttonReset { display: none !important; }
+
+/* zile */
 .CalendarDay__default, .CalendarDay__default_1 { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
 .CalendarDay__default:hover { background-color: var(--c-border) !important; }
+.CalendarDay__outside, .CalendarDay__outside_1 { background-color: var(--c-bg) !important; color: var(--c-text-muted) !important; border: 1px solid var(--c-border) !important; }
+.CalendarDay__blocked_out_of_range, .CalendarDay__blocked_out_of_range_1 { background-color: var(--c-bg) !important; color: var(--c-text-muted) !important; border: 1px solid var(--c-border) !important; }
 .CalendarDay__selected, .CalendarDay__selected_1 { background-color: rgb(var(--c-primary-rgb)) !important; color: var(--c-text-strong) !important; border: 1px solid rgb(var(--c-primary-rgb)) !important; }
+.CalendarDay__selected:hover { background-color: rgb(var(--c-primary-rgb)) !important; }
 .CalendarDay__selected_span, .CalendarDay__selected_span_1 { background-color: rgba(var(--c-primary-rgb), 0.6) !important; color: var(--c-text-strong) !important; }
 .CalendarDay__hovered_span, .CalendarDay__hovered_span_1 { background-color: var(--c-border) !important; color: var(--c-text-strong) !important; }
 
