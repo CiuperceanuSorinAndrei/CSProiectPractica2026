@@ -34,7 +34,7 @@ class NowcastingDashboard:
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
         )
-        self.app.title = "Estimarea volumului de precipitatii"
+        self.app.title = "Estimarea volumului de precipitații"
         
         def serve_layout():
             return DashboardLayout(self._store).build()
@@ -130,9 +130,9 @@ class NowcastingDashboard:
             Output("val-current-vol", "children"),
             Output("val-predicted-vol", "children"),
             Output("val-max-rain", "children"),
-            Output("val-metrics-15m", "children"),
+            Output("val-metrics-30m", "children"),
             Output("val-metrics-1h", "children"),
-            Output("val-metrics-3h", "children"),
+            Output("val-metrics-2h", "children"),
             Output("val-metrics-total", "children"),
             Output("val-tracked", "children"),
             Output("val-in-roi", "children"),
@@ -141,14 +141,14 @@ class NowcastingDashboard:
             Output("diagnostics-div", "children"),
             Output("is-processing", "data"),
             Output("input-warnings", "children"),
-            Output("map-zoom-slider", "value"),
-            Output("roi-radius-slider", "value"),
+            Output("map-zoom-input", "value"),
+            Output("roi-radius-input", "value"),
             Input("frame-slider", "value"),
             Input("location-select", "value"),
             Input("manual-lat", "value"),
             Input("manual-lon", "value"),
-            Input("map-zoom-slider", "value"),
-            Input("roi-radius-slider", "value"),
+            Input("map-zoom-input", "value"),
+            Input("roi-radius-input", "value"),
             State("run-mode-select", "value"),
             State("active-time-range", "data"),
             State("session-id", "data"),
@@ -225,7 +225,7 @@ class NowcastingDashboard:
             return "Format dată/oră invalid!", dash.no_update, dash.no_update, dash.no_update
 
         if start_dt >= end_dt:
-            return "Timpul de Start trebuie să fie înaintea Stop!", dash.no_update, dash.no_update, dash.no_update
+            return "Timpul de Start trebuie să preceadă timpul de Stop!", dash.no_update, dash.no_update, dash.no_update
 
         new_count = self._data_service.download_range(start_dt, end_dt)
         msg = (f"✓ S-au descărcat {new_count} fișiere noi. Gata de folosire!" if new_count

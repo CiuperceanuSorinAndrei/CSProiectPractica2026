@@ -10,6 +10,7 @@ class FrameHistory:
         self.last_frame_idx = -1
         self.total_volume_m3 = 0.0
         self.frames_processed = 0
+        self.last_result = None
         
         # Stocam istoricul valorilor instantanee
         self.true_volumes = []
@@ -29,6 +30,7 @@ class FrameHistory:
     def accumulate(self, result) -> None:
         self.total_volume_m3 += result.roi_volume_m3
         self.frames_processed += 1
+        self.last_result = result
         
         self.true_volumes.append(result.roi_volume_m3)
         

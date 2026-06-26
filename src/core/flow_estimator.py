@@ -54,5 +54,20 @@ class FlowEstimator:
         # Upscale inapoi la rezolutia originala
         flow_full = cv2.resize(flow_small, (w, h), interpolation=cv2.INTER_LINEAR)
         
+        # V23: Global Steering Wind (Curent de Ghidaj Global)
+        # Netezirea (V22) a lasat totusi o divergenta macro la nivelul frontului atmosferic.
+        # Pentru a bloca matematic cv2.remap sa creeze volum din nimic la advectia inversa,
+        # vectorul de vant trebuie sa fie uniform (divergenta EXACT 0.0).
+        # Extragem media vectorilor strict deasupra ploii curente.
+        rain_mask = curr_img > 0
+        if np.any(rain_mask):
+            mean_vx = float(np.mean(flow_full[:, :, 0][rain_mask]))
+            mean_vy = float(np.mean(flow_full[:, :, 1][rain_mask]))
+        else:
+            mean_vx, mean_vy = 0.0, 0.0
+            
+        flow_full[:, :, 0] = mean_vx
+        flow_full[:, :, 1] = mean_vy
+        
         # Inmultim cu 2 deoarece am facut downscale cu factor de 0.5 (x2 la pixel movement)
         return flow_full * 2.0

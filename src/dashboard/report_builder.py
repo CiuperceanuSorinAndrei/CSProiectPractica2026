@@ -149,7 +149,7 @@ class ReportBuilder:
                     html.Hr(),
                     html.H6("Acuratețe Volumetrică", className="fw-bold mt-3"),
                     dbc.Table([
-                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("Volum Real (mii m³)"), html.Th("Volum Prezist (mii m³)"), html.Th("Eroare (Delta %)")])),
+                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("Volum Real (mii m³)"), html.Th("Volum Prezis (mii m³)"), html.Th("Eroare (Delta %)")])),
                         html.Tbody(vol_rows)
                     ], bordered=True, color="dark", hover=True, size="sm", className="mb-4"),
                     html.H6("Performanță Cinematică (Medii)", className="fw-bold"),

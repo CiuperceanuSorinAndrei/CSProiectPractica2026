@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from shapely.geometry import Point, shape
-from shapely.prepared import prep
+import shapely
+from shapely.geometry import shape
 
 
 class PolygonIntersection:
@@ -27,10 +27,11 @@ class PolygonIntersection:
         if len(points) == 0:
             return 0.0
 
-        prepared_poly = prep(polygon)
-        hits = sum(
-            1
-            for y_idx, x_idx in points
-            if prepared_poly.contains(Point(lon_grid[y_idx, x_idx], lat_grid[y_idx, x_idx]))
-        )
-        return hits / len(points)
+        # V24 Fix: Vectorizare shapely 2.0 in loc de for loop nativ Python cu shapely.Point instantiat iterativ
+        lons = lon_grid[points[:, 0], points[:, 1]]
+        lats = lat_grid[points[:, 0], points[:, 1]]
+        
+        point_geoms = shapely.points(lons, lats)
+        hits = np.sum(shapely.contains(polygon, point_geoms))
+        
+        return float(hits) / len(points)

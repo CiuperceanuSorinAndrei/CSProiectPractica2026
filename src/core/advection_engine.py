@@ -47,9 +47,12 @@ class AdvectionEngine:
                 
             pred_area = max(1.0, pred_area) 
             
-            # V21 Climatological Decay: Limiteaza cresterea celulelor dupa 1 ora (steps > 4).
-            # Daca predictia e la +2h (steps=8), cresterea maxima permisa este 1.0 (zero crestere, doar decadere permisa).
-            max_growth = max(1.0, 2.0 - 0.2 * max(0, steps - 3)) 
+            # V23 Climatological Decay: Fortam scaderea volumului la orizonturi mari (Regression to the mean).
+            # Fara NWP, furtunile convective prezise la >1h tind sa supraestimeze realitatea (deoarece ele se disipa).
+            # steps=2 (30m) -> max_growth = 1.2
+            # steps=4 (1h)  -> max_growth = 0.9
+            # steps=8 (2h)  -> max_growth = 0.3
+            max_growth = max(0.3, 1.2 - 0.15 * max(0, steps - 2))
             cumulative_factor = min(pred_area / area, max_growth)
             
             # 3. Acceleratia Spatiala (Traiectorii Curbate)

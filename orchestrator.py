@@ -88,7 +88,9 @@ class Orchestrator:
         center_lat: float, center_lon: float, radius_km: float,
     ) -> FrameResult | None:
         self._last_activity = time.monotonic()
-        if not self._lock.acquire(blocking=False):
+        # V24 Fix: Asteptam scurt dupa lacat pentru a preveni sufocarea UI-ului (ServerBusy)
+        # cauzata de thread-ul de warmup din fundal.
+        if not self._lock.acquire(timeout=0.5):
             raise ServerBusy()
 
         try:
@@ -207,6 +209,9 @@ class Orchestrator:
                 return
             if self._warm_stop is not None:
                 self._warm_stop.set()
+                # V24 Fix: Ne asiguram ca thread-ul vechi e inchis curat inainte sa deschidem altul
+                if self._warm_thread and self._warm_thread.is_alive():
+                    self._warm_thread.join(timeout=1.0)
             stop = threading.Event()
             geom_args = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
             self._warm_stop = stop

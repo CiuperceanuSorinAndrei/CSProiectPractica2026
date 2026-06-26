@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
-
+import threading
 import numpy as np
 from pyproj import CRS, Transformer
+
+# V24 Fix: Thread-Local Storage pentru a preveni crash-urile C (Segmentation Fault)
+# din cauza refolosirii unui Transformer non-thread-safe intre UI si background warmup.
+_tls = threading.local()
 
 
 class GeoProjection:
@@ -53,12 +57,17 @@ class GeoProjection:
         )
 
     @staticmethod
-    @lru_cache(maxsize=4)
     def _cached_transformer(source: str, target: str) -> Transformer:
-        """Cache intern pentru Transformer-e pyproj (keyed pe proj4/epsg ca string)."""
-        def _to_crs(val: str) -> CRS:
-            if val.startswith("+proj"):
-                return CRS.from_proj4(val)
-            return CRS.from_epsg(int(val))
-
-        return Transformer.from_crs(_to_crs(source), _to_crs(target), always_xy=True)
+        """Cache intern pentru Transformer-e pyproj (Thread-Safe prin TLS)."""
+        if not hasattr(_tls, "transformers"):
+            _tls.transformers = {}
+            
+        key = (source, target)
+        if key not in _tls.transformers:
+            def _to_crs(val: str) -> CRS:
+                if val.startswith("+proj"):
+                    return CRS.from_proj4(val)
+                return CRS.from_epsg(int(val))
+            _tls.transformers[key] = Transformer.from_crs(_to_crs(source), _to_crs(target), always_xy=True)
+            
+        return _tls.transformers[key]

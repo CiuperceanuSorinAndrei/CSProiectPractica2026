@@ -34,7 +34,7 @@ class DashboardLayout:
     def _sidebar(self) -> html.Div:
         return html.Div(
             [
-                html.H4("Estimarea volumului de precipitatii din produse satelitare",
+                html.H4("Estimarea volumului de precipitații din produse satelitare",
                         className="text-info fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 html.Hr(),
                 *self._run_mode_section(),
@@ -62,7 +62,7 @@ class DashboardLayout:
     def _roi_section() -> list:
         return [
             html.H6("Regiune de Interes (ROI)", className="fw-bold"),
-            dbc.Label("Alege Locație"),
+            dbc.Label("Alege locație"),
             dbc.Select(
                 id="location-select",
                 options=[{"label": k, "value": k} for k in PREDEFINED_LOCATIONS.keys()],
@@ -88,10 +88,10 @@ class DashboardLayout:
                 style={"display": "none"},
             ),
             dbc.Label("Arie Vizualizare Hartă (km)", className="text-light"),
-            dbc.Input(id="map-zoom-slider", type="number", step=10, debounce=True, value=MAP_ZOOM_DEFAULT,
+            dbc.Input(id="map-zoom-input", type="number", step=10, debounce=True, value=MAP_ZOOM_DEFAULT,
                       className="mb-3 bg-dark text-light border-secondary"),
             dbc.Label("Rază Bazin/Oraș (km) - Volum", className="text-light"),
-            dbc.Input(id="roi-radius-slider", type="number", step=1, debounce=True, value=ROI_RADIUS_DEFAULT,
+            dbc.Input(id="roi-radius-input", type="number", step=1, debounce=True, value=ROI_RADIUS_DEFAULT,
                       className="mb-4 bg-dark text-light border-secondary"),
             html.Div(id="input-warnings"),
         ]
@@ -183,9 +183,9 @@ class DashboardLayout:
                 ], className="mb-3"),
                 html.H4("Performanță Predicție (CSI/FAR/POD/FSS)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
-                    dbc.Col(self._metric_card("Orizont +30 min", "val-metrics-15m", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +30 min", "val-metrics-30m", "success", "success")),
                     dbc.Col(self._metric_card("Orizont +1 oră", "val-metrics-1h", "success", "success")),
-                    dbc.Col(self._metric_card("Orizont +2 ore", "val-metrics-3h", "success", "success")),
+                    dbc.Col(self._metric_card("Orizont +2 ore", "val-metrics-2h", "success", "success")),
                     dbc.Col(self._metric_card("Scor Mediu", "val-metrics-total", "success", "success")),
                 ], className="mb-4"),
                 html.H4("Celule", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),

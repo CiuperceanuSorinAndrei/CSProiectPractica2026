@@ -1,4 +1,5 @@
 """Gestionarea starii per-utilizator (Sesiuni) pentru Dashboard."""
+import time
 import uuid
 
 from orchestrator import Orchestrator
@@ -12,8 +13,23 @@ class SessionManager:
         self._orchestrators: dict[str, Orchestrator] = {}
         self._histories: dict[str, FrameHistory] = {}
         self._last_dataset_id = {}
+        self._last_access: dict[str, float] = {}
+
+    def _cleanup_old_sessions(self):
+        """Previnem Memory Leak stergand sesiunile mai vechi de 1 ora."""
+        now = time.time()
+        expired = [sid for sid, t in self._last_access.items() if now - t > 3600]
+        for sid in expired:
+            self._orchestrators.pop(sid, None)
+            self._histories.pop(sid, None)
+            self._last_dataset_id.pop(sid, None)
+            self._last_access.pop(sid, None)
 
     def get_state(self, session_id: str) -> tuple[Orchestrator, FrameHistory]:
+        self._cleanup_old_sessions()
+        if not session_id:
+            session_id = "default"
+        self._last_access[session_id] = time.time()
         if not session_id:
             session_id = "default"
         if session_id not in self._orchestrators:
@@ -34,7 +50,8 @@ class SessionManager:
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
 
-        dataset_id = (run_mode, str(time_range))
+        # V24 Fix: Includem si bbox in dataset_id pentru a forta resetarea trackerului daca utilizatorul da zoom!
+        dataset_id = (run_mode, str(time_range), str(bbox))
         session_dataset = self._last_dataset_id.get(session_id)
         is_new_dataset = (session_dataset != dataset_id)
 
@@ -70,9 +87,9 @@ class SessionManager:
                 return None
             hist.accumulate(result)
         elif is_same_frame:
-            result = run(frame_idx)
-            if result is None:
-                return None
+            # V24 Fix: Returnam ultimul rezultat in loc sa rulam run(frame_idx) din nou, 
+            # ceea ce distrugea tracker-ul (viteza 0).
+            return hist.last_result
         else:
             for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
                 inter = run(i)

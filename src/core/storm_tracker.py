@@ -135,7 +135,10 @@ class StormTracker:
                         continue
                         
                     kf_parent = self._kalman_bank[p_id]
-                    dist = np.sqrt((c_cell["centroid_x"] - kf_parent.x) ** 2 + (c_cell["centroid_y"] - kf_parent.y) ** 2)
+                    # V24 Fix: Folosim predictia centroidului calculata INAINTE de update, nu starea instabila kf_parent (prior/posterior mix)
+                    px = p_cell.get("predicted_centroid_x", kf_parent.x)
+                    py = p_cell.get("predicted_centroid_y", kf_parent.y)
+                    dist = np.sqrt((c_cell["centroid_x"] - px) ** 2 + (c_cell["centroid_y"] - py) ** 2)
                     
                     if dist <= (self._max_dist_pixels * 2.5) and dist < best_parent_dist:
                         best_parent_dist = dist
@@ -159,8 +162,9 @@ class StormTracker:
             tracked_cell["d_area_kalman"] = kf_current.d_area
             tracked_cell["dd_area_kalman"] = kf_current.dd_area
 
-            predicted_centroid_x = tracked_cell["centroid_x"] + tracked_cell["v_x"]
-            predicted_centroid_y = tracked_cell["centroid_y"] + tracked_cell["v_y"]
+            # V24 Fix: Includem acceleratia in predictia pasului 1 pentru consistenta cu advectia
+            predicted_centroid_x = tracked_cell["centroid_x"] + tracked_cell["v_x"] + 0.5 * tracked_cell["a_x"]
+            predicted_centroid_y = tracked_cell["centroid_y"] + tracked_cell["v_y"] + 0.5 * tracked_cell["a_y"]
             tracked_cell["predicted_centroid_x"] = float(predicted_centroid_x)
             tracked_cell["predicted_centroid_y"] = float(predicted_centroid_y)
 
@@ -206,13 +210,15 @@ class StormTracker:
                 max(tracked_cell["area_history"][idx], 1) / max(tracked_cell["area_history"][idx - 1], 1)
                 for idx in range(1, len(tracked_cell["area_history"]))
             ]
-            raw_area_trend = float(np.mean(area_deltas[-3:]))
+            # V24 Fix: Utilizam media geometrica a multiplicatorilor pentru a elimina bias-ul pozitiv aritmetic
+            raw_area_trend = float(np.prod(area_deltas[-3:]) ** (1.0 / len(area_deltas[-3:])))
         else:
             raw_area_trend = float(tracked_cell.get("area_trend", 1.0))
 
         if len(tracked_cell["cell_history"]) >= 3:
             recent_areas = [item["area_pixels"] for item in tracked_cell["cell_history"][-3:]]
-            recent_area_trend = float(np.mean(recent_areas) / max(recent_areas[0], 1))
+            # V24 Fix: Calcul corect al tendintei din history
+            recent_area_trend = float(recent_areas[-1] / max(recent_areas[0], 1))
         else:
             recent_area_trend = raw_area_trend
 
