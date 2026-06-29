@@ -50,7 +50,7 @@ class NowcastingDashboard:
         return self.app.server
 
     def run(self, debug: bool = True, port: int = 8050) -> None:
-        print("Pornește serverul Dash... Deschide http://127.0.0.1:8050 în browser!")
+        print("Porneste serverul Dash... Deschide http://127.0.0.1:8050 in browser!")
         self.app.run(debug=debug, port=port)
 
     # ---- callbacks --------------------------------------------------------
@@ -63,9 +63,13 @@ class NowcastingDashboard:
         app = self.app
 
         app.callback(
+            Output("predefined-loc-div", "style"),
+            Output("reservoir-loc-div", "style"),
             Output("manual-coords-div", "style"),
+            Output("radius-input-div", "style"),
+            Input("location-type", "value"),
             Input("location-select", "value"),
-        )(self._toggle_manual_coords)
+        )(self._toggle_location_inputs)
 
         app.callback(
             Output("animation-interval", "disabled"),
@@ -149,6 +153,8 @@ class NowcastingDashboard:
             Output("img-loading-sentinel", "children"),  # tine spinner-ul aprins cat ruleaza callback-ul
             Input("frame-slider", "value"),
             Input("location-select", "value"),
+            Input("location-type", "value"),
+            Input("reservoir-select", "value"),
             Input("manual-lat", "value"),
             Input("manual-lon", "value"),
             Input("map-zoom-input", "value"),
@@ -173,8 +179,13 @@ class NowcastingDashboard:
 
     # ---- simple callbacks --------------------------------------------------
     @staticmethod
-    def _toggle_manual_coords(loc):
-        return {"display": "block"} if loc == MANUAL_LOCATION else {"display": "none"}
+    def _toggle_location_inputs(loc_type, loc_select):
+        show_predefined = {"display": "block"} if loc_type == "predefined" else {"display": "none"}
+        show_reservoir = {"display": "block"} if loc_type == "reservoir" else {"display": "none"}
+        show_manual = {"display": "block"} if (loc_type == "predefined" and loc_select == MANUAL_LOCATION) else {"display": "none"}
+        # Ascundem raza cand e poligon
+        show_radius = show_predefined
+        return show_predefined, show_reservoir, show_manual, show_radius
 
     @staticmethod
     def _toggle_play(n_clicks, currently_disabled):
@@ -255,9 +266,10 @@ class NowcastingDashboard:
 
     # ---- main dashboard callback ------------------------------------------
     def _update_dashboard(
-        self, frame_idx, loc_choice, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
+        self, frame_idx, loc_choice, loc_type, res_select, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
     ):
         import numpy as np
+        from src.geo.reservoir_loader import ReservoirLoader
         from src.dashboard.constants import MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT, ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT
         raw_zoom, raw_radius = map_zoom, radius_km
         zoom = min(max(map_zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX) if map_zoom is not None else MAP_ZOOM_DEFAULT
@@ -282,11 +294,23 @@ class NowcastingDashboard:
         frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
         label = FrameStore.label(nc_files[frame_idx])
         
-        if loc_choice == MANUAL_LOCATION:
-            center = (float(m_lat), float(m_lon))
+        polygon = None
+        if loc_type == "reservoir":
+            reservoirs = ReservoirLoader.get_all_reservoirs()
+            if res_select in reservoirs:
+                res_data = reservoirs[res_select]
+                center = res_data["center"]
+                polygon = res_data["polygon"]
+                # Ajustam zoom-ul hartii automat pentru a prinde tot lacul daca e prea mare
+                zoom = max(zoom, res_data["radius_km"] * 2.5)
+            else:
+                center = (45.0, 25.0)
         else:
-            cfg = PREDEFINED_LOCATIONS[loc_choice]
-            center = (float(cfg["lat"]), float(cfg["lon"]))
+            if loc_choice == MANUAL_LOCATION:
+                center = (float(m_lat), float(m_lon))
+            else:
+                cfg = PREDEFINED_LOCATIONS[loc_choice]
+                center = (float(cfg["lat"]), float(cfg["lon"]))
             
         center_lat, center_lon = center
         delta_lat = zoom / 111.0
@@ -296,7 +320,7 @@ class NowcastingDashboard:
         from orchestrator import ServerBusy
         try:
             result = self._session_manager.process_to_frame(
-                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self._store
+                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self._store, polygon=polygon
             )
         except ServerBusy:
             from dash.exceptions import PreventUpdate
@@ -316,7 +340,8 @@ class NowcastingDashboard:
             extent=bbox,
             title=title,
             roi_center=center,
-            roi_radius_km=radius
+            roi_radius_km=radius,
+            polygon=polygon
         )
         StormMapPlotter.draw_overlays(
             ax=ax,
