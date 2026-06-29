@@ -258,13 +258,20 @@ body .VirtualizedSelectFocusedOption { background-color: rgb(var(--c-primary-rgb
 /* =============================================================================
    Layout: sidebar fix + borduri/linii
    ============================================================================= */
-body .app-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+/* z-index ridicat: popup-ul calendarului (position:fixed, randat in sidebar) depaseste sidebar-ul
+   ingust; fara asta cardurile din zona de continut il acopera (apare "sub" ele). */
+body .app-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; z-index: 1000; }
 body .app-sidebar::-webkit-scrollbar { width: 8px; }
 body .app-sidebar::-webkit-scrollbar-track { background: var(--c-bg); }
 body .app-sidebar::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 4px; }
 body .border-secondary { border-color: var(--c-border) !important; }
 body .table-dark { --bs-table-border-color: var(--c-border); }
 body hr { border-color: var(--c-border) !important; opacity: 0.5 !important; }
+
+/* Tabel diagnoza Kalman: antet albastru (ca slider-ul Control Timp), corp gri (ca textul din sidebar) */
+body .kalman-diag { font-size: 1.15rem; }
+body .kalman-diag thead th { color: rgb(var(--c-info-rgb)) !important; }
+body .kalman-diag tbody td { color: rgb(var(--c-text-rgb)) !important; }
 
 /* =============================================================================
    Componente Bootstrap (butoane, alerte, radio) rutate prin variabilele temei.
