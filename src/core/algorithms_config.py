@@ -10,22 +10,11 @@ class AlgorithmsConfig:
     KALMAN_R_POS: float = 5.0
     KALMAN_R_AREA: float = 0.2
     
-    # --- Advection & Growth Parameters ---
-    ADV_TAU_GROWTH: float = 3.0    # Număr de pași pentru creștere la asimptotă
-    ADV_TAU_DECAY: float = 4.0     # Număr de pași pentru descreștere la asimptotă
-    ADV_MAX_GROWTH_LIMIT: float = 1.2
-    ADV_CLIMATOLOGICAL_DECAY_RATE: float = 0.15
-    
-    # --- Thermodynamic Lifecycle (Phase 2.5/3) ---
-    ENABLE_THERMODYNAMIC_DECAY: bool = True
-    DECAY_MODEL: str = "piecewise"
-    BIRTH_MAX_MULTIPLIER: float = 1.3
-    
-    DECAY_CURVES: dict[str, list[float]] = field(default_factory=lambda: {
-        "BIRTH":       [1.00, 1.00, 1.00, 0.99, 0.98, 0.96, 0.94, 0.92, 0.90],
-        "MATURITY":    [1.00, 1.00, 1.00, 0.97, 0.93, 0.88, 0.82, 0.76, 0.70],
-        "DISSIPATION": [1.00, 1.00, 0.95, 0.88, 0.78, 0.68, 0.58, 0.50, 0.45]
-    })
+    # --- Reaction-Diffusion (Phase 4) Parameters ---
+    RD_GAMMA: float = 0.15
+    RD_ALPHA_G: float = 2.0
+    RD_ALPHA_D: float = 2.5
+    RD_BETA: float = 1.0
     
     # --- S-PROG Diffusion ---
     SPROG_BASE_UNCERTAINTY_WEIGHT: float = 0.1

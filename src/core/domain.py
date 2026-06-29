@@ -41,6 +41,10 @@ class StormCell:
     dd_area_kalman: float = 0.0
     uncertainty_trace: float = 0.0
     
+    # Phase 4 Energetics (Reaction-Diffusion)
+    E: float = 0.0
+    dE: float = 0.0
+    
     # Trenduri si Predictii Avansate
     volume_trend: float = 1.0
     predicted_area_pixels: int = 0

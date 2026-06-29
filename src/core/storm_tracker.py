@@ -12,6 +12,7 @@ from src.core.flow_estimator import FlowEstimator
 from src.core.domain import StormCell
 from src.core.kinematic_updater import KinematicUpdater
 from src.core.cell_lifecycle import CellLifecycleManager
+from src.core.reaction_diffusion import lifecycle
 
 
 class StormTracker:
@@ -62,10 +63,15 @@ class StormTracker:
             coords = c_cell.coords
             if coords is not None and len(coords) > 0:
                 c_cell.volume = float(np.sum(rain_matrix[coords[:, 0], coords[:, 1]]))
+                c_cell.mean_intensity = c_cell.volume / c_area
             else:
                 c_cell.volume = 1.0
+                c_cell.mean_intensity = 0.0
                 
             c_cell.area_pixels = int(c_area)
+            c_cell.E = c_cell.volume / 1000.0
+            c_cell.dE = 0.0
+            
             self.build_cell_mask(c_cell, rain_matrix)
 
         for p_cell in self._previous_cells:
@@ -93,6 +99,9 @@ class StormTracker:
                 p_volume = best_match.volume or 1.0
                 tracked_cell.volume_trend = c_volume / (p_volume + 1e-5)
                 
+                tracked_cell.E = c_cell.E
+                tracked_cell.dE = c_cell.E - best_match.E
+                
                 pred_x_prior, pred_y_prior = self._kinematic_updater.get_prior_prediction(cell_id)
                 tracked_cell.prediction_error_pixels = np.sqrt(
                     (c_cell.centroid_x - pred_x_prior) ** 2 + (c_cell.centroid_y - pred_y_prior) ** 2
@@ -107,6 +116,8 @@ class StormTracker:
                 tracked_cell.cell_id = cell_id
                 tracked_cell.prediction_error_pixels = 0.0
                 tracked_cell.volume_trend = 1.0
+                tracked_cell.E = c_cell.E
+                tracked_cell.dE = 0.0
                 
                 CellLifecycleManager.transfer_history(c_cell, tracked_cell, None, float(c_area))
 
@@ -169,7 +180,9 @@ class StormTracker:
             # Area trend logic
             trend = CellLifecycleManager.compute_area_trend(tracked_cell)
             tracked_cell.volume_trend = trend
-            CellLifecycleManager.evaluate_lifecycle(tracked_cell)
+            
+            # Phase 4 Lifecycle logic
+            tracked_cell.lifecycle_phase = lifecycle(tracked_cell.E, tracked_cell.dE)
             
             predicted_area_pixels = int(round(max(c_area, 1.0) * trend))
             tracked_cell.predicted_area_pixels = predicted_area_pixels

@@ -9,8 +9,11 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import scipy.sparse as sp
+from scipy.spatial.distance import cdist
+
 from src.core.domain import StormCell
 from src.core.algorithms_config import config as algo_config
+from src.core.reaction_diffusion import update_energy, lifecycle
 
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
@@ -27,69 +30,42 @@ class AdvectionEngine:
     @staticmethod
     def _create_spatial_growth_mask(
         shape: tuple[int, int],
-        tracked_cells: list[StormCell],
-        steps: int
+        simulated_cells: list[StormCell],
+        original_cells_dict: dict[str, StormCell]
     ) -> np.ndarray:
-        """Creeaza o masca globala de crestere/scadere bazata pe halouri Gaussiene."""
+        """Creeaza o masca globala de crestere/scadere bazata pe halouri Gaussiene si E_pred."""
         h, w = shape
         growth_mask = np.ones((h, w), dtype=np.float32)
         decay_mask = np.ones((h, w), dtype=np.float32)
         
-        valid_cells = [c for c in tracked_cells if c.is_tracked]
-        if not valid_cells:
-            return growth_mask
-            
         y_grid, x_grid = AdvectionEngine._get_grids((h, w))
         
-        for c in valid_cells:
-            area = max(1.0, c.predicted_area_kalman)
-            d_area = c.d_area_kalman
-            
-            # V18: Model Asimptotic de Crestere (Fara parabole explozive)
-            if d_area > 0:
-                tau_growth = algo_config.ADV_TAU_GROWTH
-                pred_area = area + d_area * tau_growth * (1.0 - np.exp(-steps / tau_growth))
-            else:
-                tau_decay = algo_config.ADV_TAU_DECAY
-                pred_area = area + d_area * tau_decay * (1.0 - np.exp(-steps / tau_decay))
+        for c in simulated_cells:
+            orig_c = original_cells_dict.get(c.cell_id)
+            if not orig_c:
+                continue
                 
-            pred_area = max(1.0, pred_area) 
+            orig_E = max(1e-6, orig_c.E)
+            cumulative_factor = getattr(c, "cumulative_R", c.E / orig_E)
+            cumulative_factor = np.clip(cumulative_factor, 0.2, 3.0)
             
-            # V29: Termodinamic Lifecycle Decay (Rezolva alarmele false la orizonturi mari)
-            phase = getattr(c, 'lifecycle_phase', 'MATURITY')
+            cy = c.predicted_centroid_y
+            cx = c.predicted_centroid_x
             
-            if getattr(algo_config, 'ENABLE_THERMODYNAMIC_DECAY', True):
-                curve = algo_config.DECAY_CURVES.get(phase, algo_config.DECAY_CURVES["MATURITY"])
-                lookup_step = min(max(0, steps), len(curve) - 1)
-                max_growth = curve[lookup_step]
-                
-                if phase == 'BIRTH' and steps <= 3:
-                    max_growth = max(max_growth, algo_config.BIRTH_MAX_MULTIPLIER)
+            # Estimam aria plecand de la volumul (E) curent. Presupunem intensitate medie constanta.
+            # NOTA: c.E este normalizat (/ 1000.0) in storm_tracker, deci inmultim la loc.
+            mean_intensity = max(1e-6, orig_c.mean_intensity)
+            
+            # Calculam aria bazata STRICT pe cresterea pur-fizica, nu pe artefacte de difuzie
+            pred_area = (orig_E * cumulative_factor * 1000.0) / mean_intensity
+            
+            # Folosim radius marit pentru decay, altfel marginile furtunii supravietuiesc la infinit
+            if cumulative_factor < 1.0:
+                orig_area = (orig_E * 1000.0) / mean_intensity
+                radius = max(5.0, np.sqrt(orig_area / np.pi))
             else:
-                max_growth = max(0.3, algo_config.ADV_MAX_GROWTH_LIMIT - algo_config.ADV_CLIMATOLOGICAL_DECAY_RATE * max(0, steps - 2))
-                if phase == 'BIRTH':
-                    max_growth = max(max_growth, 2.0)
-                
-            cumulative_factor = min(pred_area / area, max_growth)
-            
-            # 3. Acceleratia Spatiala (Traiectorii Curbate) bazate pe amortizare Singer (gamma=0.8)
-            gamma = 0.8
-            if gamma == 1.0:
-                term_a = 0.5 * (steps ** 2)
-            else:
-                term_a = (2*steps - (1+gamma)*(1-gamma**steps)/(1-gamma)) / (2*(1-gamma))
-            
-            cy = c.centroid_y + c.v_y * steps + c.a_y * term_a
-            cx = c.centroid_x + c.v_x * steps + c.a_x * term_a
-            
-            # V19: Raza haloului asimetrica (corecteaza explozia de volum!)
-            # Daca furtuna creste, folosim aria extinsa. Daca moare, TRBUIE sa acoperim intreaga furtuna existenta!
-            if cumulative_factor >= 1.0:
                 radius = max(5.0, np.sqrt(pred_area / np.pi))
-            else:
-                radius = max(5.0, np.sqrt(area / np.pi))
             
-            # Optimizare: Bounding Box local (3-Sigma)
             y_min = max(0, int(cy - 3 * radius))
             y_max = min(h, int(cy + 3 * radius + 1))
             x_min = max(0, int(cx - 3 * radius))
@@ -106,14 +82,13 @@ class AdvectionEngine:
             
             local_multiplier = 1.0 + (cumulative_factor - 1.0) * halo
             
-            # Evitam inmultirea multiplicatorilor (explozie) si luam doar impactul maxim
             if cumulative_factor >= 1.0:
                 growth_mask[y_slice, x_slice] = np.maximum(growth_mask[y_slice, x_slice], local_multiplier)
             else:
                 decay_mask[y_slice, x_slice] = np.minimum(decay_mask[y_slice, x_slice], local_multiplier)
             
         final_mask = growth_mask * decay_mask
-        return np.clip(final_mask, 0.5, 2.0)
+        return np.clip(final_mask, 0.0, 5.0)
 
     @staticmethod
     def _blend_kinematics(
@@ -263,7 +238,46 @@ class AdvectionEngine:
         map_x = x_grid.copy()
         map_y = y_grid.copy()
         
+        # State pentru Reaction-Diffusion (Phase 4)
+        simulated_cells = [c.clone() for c in valid_cells]
+        for c in simulated_cells:
+            c.cumulative_R = 1.0
+        original_cells_dict = {c.cell_id: c for c in valid_cells}
+        
         for step in range(1, max_step + 1):
+            # 1. Update Kinematics (Advectie centroid)
+            for c in simulated_cells:
+                gamma = 0.8
+                term_a = (2*step - (1+gamma)*(1-gamma**step)/(1-gamma)) / (2*(1-gamma))
+                c.predicted_centroid_x = c.centroid_x + c.v_x * step + c.a_x * term_a
+                c.predicted_centroid_y = c.centroid_y + c.v_y * step + c.a_y * term_a
+                
+            # 2. Update Reaction-Diffusion (Energetics)
+            if len(simulated_cells) > 0:
+                coords = np.array([[c.predicted_centroid_x, c.predicted_centroid_y] for c in simulated_cells])
+                if len(coords) > 1:
+                    dist_matrix = cdist(coords, coords)
+                else:
+                    dist_matrix = np.zeros((1, 1))
+                
+                updates = []
+                for i, c in enumerate(simulated_cells):
+                    if len(coords) > 1:
+                        neighbor_indices = np.where((dist_matrix[i] < 50.0) & (dist_matrix[i] > 0))[0]
+                        neighbors_E = np.array([simulated_cells[j].E for j in neighbor_indices])
+                    else:
+                        neighbors_E = np.array([])
+                        
+                    E_new, dE_new, R_applied = update_energy(c.E, neighbors_E, c.dE)
+                    updates.append((E_new, dE_new, R_applied))
+                    
+                for i, c in enumerate(simulated_cells):
+                    E_new, dE_new, R_applied = updates[i]
+                    c.E = max(E_new, 1e-6)
+                    c.dE = dE_new
+                    c.cumulative_R *= R_applied
+                    c.lifecycle_phase = lifecycle(c.E, c.dE)
+            
             blended_flow_x, blended_flow_y = AdvectionEngine._blend_kinematics(
                 step, flow_x, flow_y, valid_cells, grid_h, grid_w, x_grid, y_grid
             )
@@ -282,7 +296,7 @@ class AdvectionEngine:
             )
             
             growth_mask = AdvectionEngine._create_spatial_growth_mask(
-                (grid_h, grid_w), tracked_cells, step
+                (grid_h, grid_w), simulated_cells, original_cells_dict
             )
             
             shifted_grown = shifted * growth_mask

@@ -74,16 +74,25 @@ def run_evaluation_pipeline(data_folder: str, forecast_horizon_steps: int = 2):
             future_c.centroid_x += future_c.v_x * step + future_c.a_x * term_a
             future_c.centroid_y += future_c.v_y * step + future_c.a_y * term_a
             
-            from src.core.algorithms_config import config as algo_config
-            phase = getattr(future_c, 'lifecycle_phase', 'MATURITY')
-            if getattr(algo_config, 'ENABLE_THERMODYNAMIC_DECAY', True):
-                curve = algo_config.DECAY_CURVES.get(phase, algo_config.DECAY_CURVES["MATURITY"])
-                lookup_step = min(max(0, step), len(curve) - 1)
-                max_growth = curve[lookup_step]
-            else:
-                max_growth = 1.0
+            from src.core.reaction_diffusion import update_energy
             
-            future_c.predicted_area_kalman *= max_growth
+            # Simulam evolutia E timp de 'forecast_horizon_steps'
+            E_sim = future_c.E
+            dE_sim = future_c.dE
+            for _ in range(step):
+                # Presupunem no neighbors pentru simplitate in diagnostic offline (vectorial)
+                neighbors = np.array([])
+                E_sim, dE_sim = update_energy(E_sim, neighbors, dE_sim)
+                
+            # Restituim ca factor de crestere arie
+            if future_c.E > 0:
+                future_c.predicted_area_kalman *= (E_sim / max(future_c.E, 1e-6))
+            else:
+                future_c.predicted_area_kalman *= 0.0
+                
+            future_c.E = E_sim
+            future_c.dE = dE_sim
+            
             predicted_cells_future.append(future_c)
             
         predictions_history[idx + forecast_horizon_steps] = predicted_cells_future
