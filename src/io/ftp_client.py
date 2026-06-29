@@ -10,6 +10,7 @@ class FtpClient:
     _username: str = None
     _password: str = None
     _base_dir: str = None
+    _local_dir: str = None
     _timeout: int = None
     _max_retries: int = None
     _retry_backoff: float = None
@@ -21,6 +22,7 @@ class FtpClient:
         username: str,
         password: str,
         base_dir: str,
+        local_dir: str = DATA_RAW_DIR,
         timeout: int = 30,
         max_retries: int = 3,
         retry_backoff: float = 2.0,
@@ -29,6 +31,7 @@ class FtpClient:
         self._username = username
         self._password = password
         self._base_dir = base_dir
+        self._local_dir = local_dir
         self._timeout = timeout
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
@@ -62,7 +65,8 @@ class FtpClient:
             unzipped_filename = file_name
             remote_name = file_name + '.gz'
 
-        final_nc_path = os.path.join(DATA_RAW_DIR, unzipped_filename)
+        os.makedirs(self._local_dir, exist_ok=True)
+        final_nc_path = os.path.join(self._local_dir, unzipped_filename)
         if os.path.exists(final_nc_path):
             print(f"[SKIP] Gasit local: {unzipped_filename}")
             return final_nc_path

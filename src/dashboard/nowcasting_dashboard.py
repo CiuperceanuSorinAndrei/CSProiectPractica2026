@@ -11,10 +11,11 @@ from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
 from src.io.cloud_data_service import CloudDataService
+from src.io.server_settings import ServerSettings
 from src.ui_helpers.plotting import StormMapPlotter
 from config import PREDEFINED_LOCATIONS, BASE_DIR
 
-from src.dashboard.constants import DATA_DIR, MANUAL_LOCATION, DEFAULT_TIME_RANGE
+from src.dashboard.constants import MANUAL_LOCATION, DEFAULT_TIME_RANGE
 from src.dashboard.frame_store import FrameStore
 from src.dashboard.dashboard_layout import DashboardLayout
 from src.dashboard.session_manager import SessionManager
@@ -25,8 +26,9 @@ class NowcastingDashboard:
     """Aplicatia Dash simplificata."""
 
     def __init__(self):
-        self._store = FrameStore(DATA_DIR)
-        self._data_service = CloudDataService()
+        self._settings = ServerSettings.load()
+        self._store = FrameStore(self._settings.local_dir, self._settings.file_format)
+        self._data_service = CloudDataService(self._settings)
         self._session_manager = SessionManager()
 
         self.app = dash.Dash(
@@ -109,6 +111,13 @@ class NowcastingDashboard:
             Input("run-mode-select", "value"),
             State("frame-slider", "value"),
             State("frame-slider", "max"),
+            State("srv-host", "value"),
+            State("srv-remote-dir", "value"),
+            State("srv-local-dir", "value"),
+            State("srv-user", "value"),
+            State("srv-pass", "value"),
+            State("srv-format", "value"),
+            State("time-delta", "value"),
             prevent_initial_call=True,
         )(self._poll_live_data)
 
@@ -128,6 +137,13 @@ class NowcastingDashboard:
             State("end-date", "date"),
             State("start-hour", "value"),
             State("end-hour", "value"),
+            State("srv-host", "value"),
+            State("srv-remote-dir", "value"),
+            State("srv-local-dir", "value"),
+            State("srv-user", "value"),
+            State("srv-pass", "value"),
+            State("srv-format", "value"),
+            State("time-delta", "value"),
             prevent_initial_call=True,
         )(self._download_historic)
 
@@ -177,6 +193,14 @@ class NowcastingDashboard:
             State("session-id", "data"),
         )(self._update_warmup_status)
 
+        app.callback(
+            Output("server-config-collapse", "is_open"),
+            Output("toggle-server-config", "children"),
+            Input("toggle-server-config", "n_clicks"),
+            State("server-config-collapse", "is_open"),
+            prevent_initial_call=True,
+        )(self._toggle_server_config)
+
     # ---- simple callbacks --------------------------------------------------
     @staticmethod
     def _toggle_location_inputs(loc_type, loc_select):
@@ -204,9 +228,11 @@ class NowcastingDashboard:
         is_live = (mode == "live")
         return not is_live, is_live, is_live, False, is_live, is_live, is_live, is_live, is_live
 
-    def _poll_live_data(self, n_int, mode, current_val, current_max):
+    def _poll_live_data(self, n_int, mode, current_val, current_max,
+                        host, remote_dir, local_dir, username, password, file_format, time_delta):
         if mode != "live":
             raise PreventUpdate
+        self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
         self._data_service.fetch_latest()
         files = self._store.filtered(time_range=None, run_mode="live")
         if not files:
@@ -238,7 +264,26 @@ class NowcastingDashboard:
             return ""
         return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
 
-    def _download_historic(self, n, start_d, end_d, start_h, end_h):
+    @staticmethod
+    def _toggle_server_config(n, is_open):
+        """Arata/ascunde blocul de configurare server + actualizeaza chevronul butonului."""
+        new_open = not is_open
+        return new_open, ("▾ Configurare Server" if new_open else "▸ Configurare Server")
+
+    def _apply_settings(self, host, remote_dir, local_dir, username, password, file_format, time_delta) -> None:
+        """Aplica setarile de server din UI: reconfigureaza serviciul de date + store-ul si
+        persista pe disc campurile non-credentiale (NU user/parola). No-op daca nimic nu s-a schimbat."""
+        s = ServerSettings.from_inputs(host, remote_dir, local_dir, file_format, time_delta, username, password)
+        if s == self._settings:
+            return
+        s.save()  # persista host / directoare / format / interval (NU user/parola)
+        self._settings = s
+        self._data_service.reconfigure(s)
+        self._store = FrameStore(s.local_dir, s.file_format)
+
+    def _download_historic(self, n, start_d, end_d, start_h, end_h,
+                           host, remote_dir, local_dir, username, password, file_format, time_delta):
+        self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
         if not start_d or not end_d:
             return "Selectează datele!", dash.no_update, dash.no_update, dash.no_update
         if start_h is None or end_h is None:
@@ -292,7 +337,7 @@ class NowcastingDashboard:
                     "Fără date", None, None, False, warnings, zoom, radius, "")
 
         frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
-        label = FrameStore.label(nc_files[frame_idx])
+        label = self._store.label(nc_files[frame_idx])
         
         polygon = None
         if loc_type == "reservoir":

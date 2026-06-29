@@ -273,6 +273,15 @@ body .kalman-diag { font-size: 1.15rem; }
 body .kalman-diag thead th { color: rgb(var(--c-info-rgb)) !important; }
 body .kalman-diag tbody td { color: rgb(var(--c-text-rgb)) !important; }
 
+/* Spinner-ul de download (dcc.Loading): wrapper-ul lui position:relative are inaltime 0, deci
+   spinner-ul centrat absolut se revarsa peste buton si peste "Control Timp". Ii rezervam inaltime. */
+body div:has(> #loading-download) {
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
 /* =============================================================================
    Componente Bootstrap (butoane, alerte, radio) rutate prin variabilele temei.
    ============================================================================= */
