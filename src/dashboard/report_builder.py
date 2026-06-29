@@ -67,23 +67,38 @@ class ReportBuilder:
 
     @staticmethod
     def build_diagnostics(tracked_cells: list) -> html.Div:
-        diagnostics = []
+        rows = []
         for cell in tracked_cells:
             if cell.get("is_tracked", False):
                 err = cell.get("prediction_error_pixels", 0.0)
                 v_err = cell.get("size_error_percent", 0.0)
                 short_id = str(cell.get('cell_id', '???'))[:4]
-                diagnostics.append(
-                    html.Li(f"Celulă {short_id}: Eroare deplasare = {err:.1f} px | "
-                            f"Viteză ({cell.get('v_x',0):.1f}, {cell.get('v_y',0):.1f}) | "
-                            f"Accelerație ({cell.get('a_x',0):.2f}, {cell.get('a_y',0):.2f}) | "
-                            f"Deviație Volum = {v_err:.1f}%")
-                )
-        if not diagnostics:
+                rows.append(html.Tr([
+                    html.Td(short_id),
+                    html.Td(f"{err:.1f}"),
+                    html.Td(f"({cell.get('v_x', 0):.1f}, {cell.get('v_y', 0):.1f})"),
+                    html.Td(f"({cell.get('a_x', 0):.2f}, {cell.get('a_y', 0):.2f})"),
+                    html.Td(f"{v_err:.1f}%"),
+                ]))
+        if not rows:
             return html.Div(html.I("Nu există celule urmărite în acest cadru."), className="text-muted small")
         return html.Div([
             html.H6("Diagnoză Filtru Kalman (Constant Acceleration)", className="fw-bold"),
-            html.Ul(diagnostics, className="small text-warning", style={"listStyleType": "square"}),
+            # Antetul preia albastrul slider-ului, corpul griul textului din sidebar (vezi .kalman-diag in custom.css).
+            dbc.Table(
+                [
+                    html.Thead(html.Tr([
+                        html.Th("Celulă"),
+                        html.Th("Eroare (px)"),
+                        html.Th("Viteză (x, y)"),
+                        html.Th("Accelerație (x, y)"),
+                        html.Th("Deviație Volum"),
+                    ])),
+                    html.Tbody(rows),
+                ],
+                bordered=True, hover=True, color="dark",
+                className="kalman-diag mb-0",
+            ),
         ])
 
     @staticmethod

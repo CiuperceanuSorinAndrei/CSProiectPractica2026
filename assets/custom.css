@@ -115,6 +115,11 @@
 
 .border-secondary { border-color: var(--c-border) !important; }
 .table-dark { --bs-table-border-color: var(--c-border); }
+
+/* Tabel diagnoza Kalman: antet albastru (ca slider-ul Control Timp), corp gri (ca textul din sidebar) */
+.kalman-diag { font-size: 1.15rem; }
+.kalman-diag thead th { color: rgb(var(--c-info-rgb)) !important; }
+.kalman-diag tbody td { color: rgb(var(--c-text-rgb)) !important; }
 hr { border-color: var(--c-border) !important; opacity: 0.5 !important; }
 
 
