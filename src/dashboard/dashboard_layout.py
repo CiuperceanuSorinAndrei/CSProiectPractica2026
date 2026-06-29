@@ -60,14 +60,48 @@ class DashboardLayout:
 
     @staticmethod
     def _roi_section() -> list:
+        from src.geo.reservoir_loader import ReservoirLoader
+        reservoirs = ReservoirLoader.get_all_reservoirs()
+        res_options = [{"label": k, "value": k} for k in sorted(reservoirs.keys())]
+
         return [
             html.H6("Regiune de Interes (ROI)", className="fw-bold"),
-            dbc.Label("Alege locație"),
-            dbc.Select(
-                id="location-select",
-                options=[{"label": k, "value": k} for k in PREDEFINED_LOCATIONS.keys()],
-                value=list(PREDEFINED_LOCATIONS.keys())[0],
-                className="mb-3 bg-dark text-light border-secondary",
+            dbc.RadioItems(
+                id="location-type",
+                options=[
+                    {"label": "Oraș (Cerc)", "value": "predefined"},
+                    {"label": "Lac Acumulare (Poligon)", "value": "reservoir"}
+                ],
+                value="predefined",
+                inline=False,
+                className="mb-2 text-light"
+            ),
+            html.Div(
+                id="predefined-loc-div",
+                children=[
+                    dbc.Label("Alege locație (Punct)"),
+                    dbc.Select(
+                        id="location-select",
+                        options=[{"label": k, "value": k} for k in PREDEFINED_LOCATIONS.keys()],
+                        value=list(PREDEFINED_LOCATIONS.keys())[0],
+                        className="mb-3 bg-dark text-light border-secondary",
+                    )
+                ]
+            ),
+            html.Div(
+                id="reservoir-loc-div",
+                style={"display": "none"},
+                children=[
+                    dbc.Label("Alege Lac (Contur Exact)"),
+                    dcc.Dropdown(
+                        id="reservoir-select",
+                        options=res_options,
+                        value=res_options[0]["value"] if res_options else None,
+                        searchable=True,
+                        clearable=False,
+                        className="mb-3 custom-dark-dropdown",
+                    )
+                ]
             ),
             html.Div(
                 id="manual-coords-div",
@@ -90,9 +124,14 @@ class DashboardLayout:
             dbc.Label("Arie Vizualizare Hartă (km)", className="text-light"),
             dbc.Input(id="map-zoom-input", type="number", step=10, debounce=True, value=MAP_ZOOM_DEFAULT,
                       className="mb-3 bg-dark text-light border-secondary"),
-            dbc.Label("Rază Bazin/Oraș (km) - Volum", className="text-light"),
-            dbc.Input(id="roi-radius-input", type="number", step=1, debounce=True, value=ROI_RADIUS_DEFAULT,
-                      className="mb-4 bg-dark text-light border-secondary"),
+            html.Div(
+                id="radius-input-div",
+                children=[
+                    dbc.Label("Rază Circulară (km) - Volum", className="text-light"),
+                    dbc.Input(id="roi-radius-input", type="number", step=1, debounce=True, value=ROI_RADIUS_DEFAULT,
+                              className="mb-4 bg-dark text-light border-secondary"),
+                ]
+            ),
             html.Div(id="input-warnings"),
         ]
 

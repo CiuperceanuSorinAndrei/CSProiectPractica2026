@@ -35,3 +35,19 @@ class PolygonIntersection:
         hits = np.sum(shapely.contains(polygon, point_geoms))
         
         return float(hits) / len(points)
+
+    @staticmethod
+    def create_polygon_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
+        """Creeaza o masca booleana (acelasi shape ca grid-ul) pentru interiorul unui poligon."""
+        if polygon is None or lon_grid.shape != lat_grid.shape:
+            return np.zeros_like(lon_grid, dtype=bool)
+            
+        # Aplatizam grid-ul pentru shapely.points
+        flat_lons = lon_grid.ravel()
+        flat_lats = lat_grid.ravel()
+        
+        point_geoms = shapely.points(flat_lons, flat_lats)
+        # returneaza un array boolean flat, il remodelam inapoi la shape-ul gridului
+        mask_flat = shapely.contains(polygon, point_geoms)
+        
+        return mask_flat.reshape(lon_grid.shape)

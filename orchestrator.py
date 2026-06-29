@@ -85,7 +85,7 @@ class Orchestrator:
         file_path: str,
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float,
+        center_lat: float, center_lon: float, radius_km: float, polygon=None
     ) -> FrameResult | None:
         self._last_activity = time.monotonic()
         # V24 Fix: Asteptam scurt dupa lacat pentru a preveni sufocarea UI-ului (ServerBusy)
@@ -95,7 +95,7 @@ class Orchestrator:
 
         try:
             prep = self._get_frame_prep(
-                file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
+                file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon
             )
             if prep is None:
                 return None
@@ -108,9 +108,9 @@ class Orchestrator:
         file_path: str,
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float,
+        center_lat: float, center_lon: float, radius_km: float, polygon=None
     ) -> FramePrep | None:
-        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
+        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
         if geom_key != self._geom_key:
             self._geom_key = geom_key
             self._geom = None
@@ -122,7 +122,7 @@ class Orchestrator:
             return cached
 
         return self._compute_prep(
-            file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
+            file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon
         )
 
     def _compute_prep(
@@ -130,11 +130,11 @@ class Orchestrator:
         file_path: str,
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float,
+        center_lat: float, center_lon: float, radius_km: float, polygon=None
     ) -> FramePrep | None:
         bbox = (lon_min, lon_max, lat_min, lat_max)
         if self._geom is None:
-            self._geom = compute_geometry(file_path, bbox, (center_lat, center_lon), radius_km)
+            self._geom = compute_geometry(file_path, bbox, (center_lat, center_lon), radius_km, polygon=polygon)
             if self._geom is None:
                 return None
         prep = preprocess(file_path, self._geom, bbox)
@@ -200,9 +200,9 @@ class Orchestrator:
         file_paths: list[str],
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float,
+        center_lat: float, center_lon: float, radius_km: float, polygon=None
     ) -> None:
-        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
+        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
         with self._warm_lock:
             alive = self._warm_thread is not None and self._warm_thread.is_alive()
             if self._warm_complete_key == geom_key or (self._warm_geom_key == geom_key and alive):
@@ -213,7 +213,7 @@ class Orchestrator:
                 if self._warm_thread and self._warm_thread.is_alive():
                     self._warm_thread.join(timeout=1.0)
             stop = threading.Event()
-            geom_args = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
+            geom_args = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon)
             self._warm_stop = stop
             self._warm_geom_key = geom_key
             self._warm_total = len(file_paths)

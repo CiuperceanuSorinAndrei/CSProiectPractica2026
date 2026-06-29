@@ -43,9 +43,13 @@ class SessionManager:
             self._histories[session_id].reset()
 
     def process_to_frame(
-        self, session_id: str, frame_idx: int, nc_files: list, bbox: tuple, 
-        center: tuple, radius_km: float, run_mode: str, time_range: dict, store
+        self, session_id: str, frame_idx: int, nc_files: list[str],
+        bbox: tuple[float, float, float, float], center: tuple[float, float],
+        radius_km: float, run_mode: str, time_range: dict, store, polygon=None
     ):
+        self._last_access[session_id] = time.time()
+        self._cleanup_old_sessions()
+        
         """Proceseaza cadru logic (acumulare/re-randare/salt) si mentine starea."""
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
@@ -60,7 +64,7 @@ class SessionManager:
         def run(idx):
             return orch.process_frame(
                 store.path(nc_files[idx]),
-                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km,
+                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon
             )
 
         is_consecutive = (frame_idx == hist.last_frame_idx + 1)
@@ -82,7 +86,7 @@ class SessionManager:
             # Pornim warm-up-ul DUPA ce primul cadru a stabilit geometria (_geom_key); altfel
             # thread-ul de warm-up vede _geom_key=None, esueaza verificarea si se opreste imediat.
             paths = [store.path(f) for f in nc_files]
-            orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km)
+            orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon)
         elif is_consecutive:
             result = run(frame_idx)
             if result is None:

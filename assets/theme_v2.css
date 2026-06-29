@@ -1,0 +1,272 @@
+/* =============================================================================
+   TEMA DASHBOARD — ~10 culori. Schimba doar variabilele din :root de mai jos.
+   Valorile -rgb sunt triplete "R, G, B" (cerute de utilitatile Bootstrap).
+   Valorile implicite reproduc tema DARKLY (nimic nu se schimba vizual).
+   NB: culorile hartii (matplotlib/cartopy) sunt in Python — src/ui_helpers/plotting.py.
+   ============================================================================= */
+:root {
+    --c-bg: #222222;                 /* fundal cel mai inchis: pagina + popup calendar */
+    --c-surface-rgb: 48, 48, 48;     /* panouri / carduri (bg-dark) = #303030 */
+    --c-surface: rgb(var(--c-surface-rgb));
+    --c-surface-2: #343a40;          /* suprafete interactive: inputs, celule calendar, tooltip */
+    --c-border: #6c757d;             /* toate liniile: borduri, hr, scrollbar, grila calendar */
+    --c-text-rgb: 173, 181, 189;     /* text general (text-light) = #adb5bd */
+    --c-text: rgb(var(--c-text-rgb));
+    --c-text-muted: rgba(var(--c-text-rgb), 0.6);
+    --c-text-strong: #f8f9fa;        /* text accentuat: inputs, titluri pe fundal inchis */
+    --c-info-rgb: 52, 152, 219;      /* accent info (titlu, carduri info) = #3498db */
+    --c-success-rgb: 0, 188, 140;    /* success = #00bc8c (Play, raport final) */
+    --c-danger-rgb: 231, 76, 60;     /* danger = #e74c3c (Reset, avertismente) */
+    --c-primary-rgb: 55, 90, 127;    /* primary = #375a7f (radio, zi selectata calendar) */
+
+    /* ----- Mapare catre Bootstrap (utilitati + componente) ----- */
+    --bs-dark-rgb: var(--c-surface-rgb);
+    --bs-light-rgb: var(--c-text-rgb);
+    --bs-info-rgb: var(--c-info-rgb);
+    --bs-success-rgb: var(--c-success-rgb);
+    --bs-danger-rgb: var(--c-danger-rgb);
+    --bs-primary-rgb: var(--c-primary-rgb);
+    --bs-dark: var(--c-surface);
+    --bs-light: var(--c-text);
+    --bs-info: rgb(var(--c-info-rgb));
+    --bs-success: rgb(var(--c-success-rgb));
+    --bs-danger: rgb(var(--c-danger-rgb));
+    --bs-primary: rgb(var(--c-primary-rgb));
+    --bs-body-bg: var(--c-bg);
+    --bs-body-color: var(--c-text);
+    --bs-border-color: var(--c-border);
+    --bs-border-color-translucent: rgba(var(--c-text-rgb), 0.3);
+    --bs-secondary-color: var(--c-text-muted);
+}
+
+
+/* =============================================================================
+   Componente native Dash (slider)
+   ============================================================================= */
+body .dash-input-container, body .dash-range-slider-input, body .dash-range-slider-max-input { display: none !important; }
+body .dash-slider-mark, body .rc-slider-mark, body .rc-slider-mark-text { display: none !important; }
+
+body .rc-slider-tooltip-inner { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; box-shadow: none !important; }
+
+/* Slider "Control Timp" */
+:root { --Dash-Fill-Interactive-Strong: rgb(var(--c-info-rgb)); }
+body .dash-slider-range { background: rgb(var(--c-info-rgb)) !important; }
+body .dash-slider-track { background: var(--c-border) !important; }
+body .dash-slider-thumb {
+    background-color: var(--c-text-strong) !important;
+    border-color: rgb(var(--c-info-rgb)) !important;
+}
+body .dash-slider-thumb:focus { outline-color: rgb(var(--c-info-rgb)) !important; }
+body .dash-slider-thumb:hover, body .dash-slider-thumb:focus {
+    box-shadow: 0 0 0 5px rgba(var(--c-info-rgb), 0.3) !important;
+}
+
+/* =============================================================================
+   NEW DASH 4+ COMPONENTS (DASH-DROPDOWN & DASH-DATEPICKER)
+   Dash a inlocuit react-select/react-dates cu clase noi
+   ============================================================================= */
+
+/* -- DROPDOWN -- */
+body button.dash-dropdown {
+    background-color: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+body .dash-dropdown-trigger,
+body .dash-dropdown-grid-container {
+    background-color: var(--c-surface) !important;
+    border: 1px solid var(--c-border) !important;
+    color: var(--c-text) !important;
+    border-radius: 0.25rem !important;
+    min-height: 31px !important; /* matches form-control-sm */
+}
+
+body .dash-dropdown-value,
+body .dash-dropdown-value-item {
+    color: var(--c-text) !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+}
+
+body .dash-dropdown-trigger-icon {
+    color: var(--c-text) !important;
+}
+
+/* Meniul de dropdown si optiunile (cand e deschis) */
+body [role="listbox"],
+body .mantine-Select-dropdown,
+body .dash-dropdown-menu {
+    background-color: var(--c-bg) !important;
+    border: 1px solid var(--c-border) !important;
+    color: var(--c-text-strong) !important;
+}
+
+body [role="option"],
+body .dash-dropdown-item {
+    background-color: var(--c-bg) !important;
+    color: var(--c-text) !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+}
+
+body [role="option"]:hover,
+body [role="option"][data-hovered],
+body [role="option"][data-selected="true"],
+body [aria-selected="true"],
+body .dash-dropdown-item:hover {
+    background-color: rgb(var(--c-primary-rgb)) !important;
+    color: var(--c-text-strong) !important;
+}
+
+body .dash-dropdown-input {
+    color: var(--c-text-strong) !important;
+}
+
+/* -- DATEPICKER -- */
+body .dash-datepicker {
+    background-color: transparent !important;
+    border: none !important;
+}
+
+body .dash-datepicker-input-wrapper {
+    background-color: var(--c-surface) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: 0.25rem !important; /* form-control-sm border radius */
+    height: 31px !important; /* match form-control-sm height */
+    overflow: hidden !important;
+}
+
+body .dash-datepicker-input {
+    background-color: transparent !important;
+    color: var(--c-text) !important;
+    font-size: 0.875rem !important; /* form-control-sm size */
+    font-family: inherit !important;
+    height: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    line-height: 1.5 !important;
+}
+
+body .dash-datepicker-caret-icon {
+    color: var(--c-text) !important;
+}
+
+/* Popup Calendar */
+body .mantine-DatePicker-dropdown,
+body .dash-datepicker-calendar,
+body .dash-datepicker-popup,
+body [role="dialog"] {
+    background-color: var(--c-bg) !important;
+    color: var(--c-text-strong) !important;
+    border: 1px solid var(--c-border) !important;
+}
+
+body .mantine-DatePicker-dropdown *,
+body .dash-datepicker-calendar *,
+body .dash-datepicker-popup *,
+body [role="dialog"] * {
+    color: var(--c-text) !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+}
+
+body button[data-type="day"],
+body .dash-datepicker-day {
+    background-color: var(--c-surface-2) !important;
+    color: var(--c-text) !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+}
+
+body button[data-type="day"]:hover,
+body .dash-datepicker-day:hover {
+    background-color: var(--c-border) !important;
+}
+
+body button[data-type="day"][data-selected="true"],
+body button[data-type="day"][data-in-range="true"],
+body .dash-datepicker-day--selected {
+    background-color: rgb(var(--c-primary-rgb)) !important;
+    color: var(--c-text-strong) !important;
+}
+
+body button[data-type="month"], body button[data-type="year"],
+body .dash-datepicker-calendar select,
+body .dash-datepicker-calendar button,
+body .mantine-DatePicker-dropdown select,
+body .mantine-DatePicker-dropdown button {
+    background-color: var(--c-surface) !important;
+    color: var(--c-text) !important;
+    border-color: var(--c-border) !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+}
+
+body .mantine-DatePicker-calendarHeaderLevel,
+body .mantine-DatePicker-calendarHeaderControl {
+    color: var(--c-text-strong) !important;
+}
+
+/* =============================================================================
+   OLD DASH COMPONENTS (react-dates & react-select) - Pastrate in caz ca ruleaza o versiune mai veche de Dash pe alt server
+   ============================================================================= */
+
+/* Forțăm fundalul dark pe absolut toate wrapperele de input din react-dates */
+body .DateInput, body .DateInput_1, body .DateRangePickerInput, body .DateRangePickerInput_1, body .SingleDatePickerInput, body .SingleDatePickerInput_1, body .DateRangePickerInput_clearDates {
+    background-color: var(--c-surface-2) !important; border-color: var(--c-border) !important;
+}
+body input.DateInput_input, body input.DateInput_input_1, body .DateInput_input, body .DateInput_input_1 {
+    background-color: transparent !important; color: var(--c-text-strong) !important; border: none !important;
+}
+body .DateRangePickerInput_arrow, body .DateRangePickerInput_arrow_1 { background-color: var(--c-surface-2) !important; }
+body .DateRangePickerInput_arrow_svg { fill: var(--c-text) !important; }
+body .SingleDatePickerInput_clearDate_svg, body .DateRangePickerInput_clearDates_svg { fill: var(--c-text) !important; }
+body .SingleDatePicker_picker, body .SingleDatePicker_picker_1, body .DateRangePicker_picker, body .DateRangePicker_picker_1 { background-color: var(--c-bg) !important; }
+body .DayPicker, body .DayPicker_1, body .DayPicker_focusRegion, body .DayPicker_focusRegion_1 { background-color: var(--c-bg) !important; }
+body .DayPicker__withBorder { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55) !important; border: 1px solid var(--c-border) !important; border-radius: 6px !important; background-color: var(--c-bg) !important; }
+body .DayPicker_transitionContainer, body .DayPicker_transitionContainer_1 { background-color: var(--c-bg) !important; }
+body .CalendarMonth, body .CalendarMonth_1, body .CalendarMonthGrid, body .CalendarMonthGrid_1 { background-color: var(--c-bg) !important; }
+body .CalendarMonth_caption, body .CalendarMonth_caption_1 { color: var(--c-text-strong) !important; }
+body .CalendarMonth_caption select { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+body .DayPicker_weekHeader, body .DayPicker_weekHeader_1 { color: var(--c-text-muted) !important; background-color: var(--c-bg) !important; }
+body .DayPicker_weekHeader_li small { color: var(--c-text-muted) !important; }
+body .DayPickerNavigation_button__default, body .DayPickerNavigation_button__default_1 { background-color: var(--c-surface-2) !important; border: 1px solid var(--c-border) !important; }
+body .DayPickerNavigation_svg__default { fill: var(--c-text-strong) !important; }
+body .DayPickerKeyboardShortcuts_buttonReset { display: none !important; }
+body .CalendarDay__default, body .CalendarDay__default_1 { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+body .CalendarDay__default:hover { background-color: var(--c-border) !important; }
+body .CalendarDay__outside, body .CalendarDay__outside_1 { background-color: var(--c-bg) !important; color: var(--c-text-muted) !important; border: 1px solid var(--c-border) !important; }
+body .CalendarDay__blocked_out_of_range, body .CalendarDay__blocked_out_of_range_1 { background-color: var(--c-bg) !important; color: var(--c-text-muted) !important; border: 1px solid var(--c-border) !important; }
+body .CalendarDay__selected, body .CalendarDay__selected_1 { background-color: rgb(var(--c-primary-rgb)) !important; color: var(--c-text-strong) !important; border: 1px solid rgb(var(--c-primary-rgb)) !important; }
+body .CalendarDay__selected:hover { background-color: rgb(var(--c-primary-rgb)) !important; }
+body .CalendarDay__selected_span, body .CalendarDay__selected_span_1 { background-color: rgba(var(--c-primary-rgb), 0.6) !important; color: var(--c-text-strong) !important; }
+body .CalendarDay__hovered_span, body .CalendarDay__hovered_span_1 { background-color: var(--c-border) !important; color: var(--c-text-strong) !important; }
+
+/* dcc.Dropdown old */
+body .Select-control { background-color: var(--c-surface-2) !important; color: var(--c-text-strong) !important; border: 1px solid var(--c-border) !important; }
+body .Select.is-focused > .Select-control { background-color: var(--c-surface-2) !important; border-color: var(--c-border) !important; box-shadow: none !important; }
+body .Select-menu-outer { background-color: var(--c-bg) !important; border: 1px solid var(--c-border) !important; z-index: 9999 !important; }
+body .Select-option { background-color: var(--c-bg) !important; color: var(--c-text-strong) !important; }
+body .Select-option.is-focused, body .Select-option.is-selected { background-color: rgb(var(--c-primary-rgb)) !important; color: var(--c-text-strong) !important; }
+body .Select-value-label { color: var(--c-text-strong) !important; }
+body .Select-arrow-zone, body .Select-clear-zone { color: var(--c-text) !important; }
+body .Select-input > input { color: var(--c-text-strong) !important; background: transparent !important; }
+body .VirtualizedSelectOption { background-color: var(--c-bg) !important; color: var(--c-text-strong) !important; }
+body .VirtualizedSelectFocusedOption { background-color: rgb(var(--c-primary-rgb)) !important; color: var(--c-text-strong) !important; }
+
+/* =============================================================================
+   Layout: sidebar fix + borduri/linii
+   ============================================================================= */
+body .app-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+body .app-sidebar::-webkit-scrollbar { width: 8px; }
+body .app-sidebar::-webkit-scrollbar-track { background: var(--c-bg); }
+body .app-sidebar::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 4px; }
+body .border-secondary { border-color: var(--c-border) !important; }
+body .table-dark { --bs-table-border-color: var(--c-border); }
+body hr { border-color: var(--c-border) !important; opacity: 0.5 !important; }
+
+/* =============================================================================
+   Componente Bootstrap (butoane, alerte, radio) rutate prin variabilele temei.
+   ============================================================================= */
+body .form-check-input:checked { background-color: rgb(var(--c-primary-rgb)) !important; border-color: rgb(var(--c-primary-rgb)) !important; }

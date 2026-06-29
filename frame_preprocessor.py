@@ -70,7 +70,7 @@ def _read_grid_and_proj(file_path: str):
         ds.close()
 
 
-def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: float) -> FrameGeometry | None:
+def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: float, polygon=None) -> FrameGeometry | None:
     """Construieste geometria (slice-uri crop, grile Lon/Lat, ROI, arie pixel) dintr-un fisier
     exemplu. Grila satelitului e fixa, deci e valabila pentru toate cadrele cu aceeasi geometrie.
     Intoarce None daca bbox-ul cade in afara imaginii satelitului."""
@@ -98,7 +98,11 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
     lon_grid, lat_grid = GeoProjection.grid_to_latlon(nx[x_slice], ny[y_slice], proj)
     # Aproximare aria unui pixel (~3km * 3km / cos(lat)).
     pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
-    roi_mask = _haversine_km(center_lat, center_lon, lat_grid, lon_grid) <= radius_km
+    if polygon is not None:
+        from src.geo.intersection import PolygonIntersection
+        roi_mask = PolygonIntersection.create_polygon_mask(polygon, lon_grid, lat_grid)
+    else:
+        roi_mask = _haversine_km(center_lat, center_lon, lat_grid, lon_grid) <= radius_km
     return FrameGeometry(lon_grid, lat_grid, pixel_area_km2, roi_mask, y_slice, x_slice)
 
 

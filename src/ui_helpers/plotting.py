@@ -24,7 +24,8 @@ class StormMapPlotter:
         title: str = "",
         roi_center: tuple[float, float] | None = None,
         roi_radius_km: float | None = None,
-    ):
+        polygon=None
+    ) -> tuple[Figure, Axes, Any]:
         """Creeaza figura principala cu harta de precipitatii.
 
         Args:
@@ -77,16 +78,22 @@ class StormMapPlotter:
         cb.ax.yaxis.set_tick_params(color="#adb5bd")
         plt.setp(plt.getp(cb.ax.axes, 'yticklabels'), color="#adb5bd")
 
-        if roi_center is not None and roi_radius_km is not None:
+        if polygon is not None:
+            # Daca avem poligon, adaugam un fundal alb transparent si bordura mai groasa pentru a face lacurile mici mai vizibile
+            ax.add_geometries(
+                [polygon], crs=ccrs.PlateCarree(),
+                facecolor=(1.0, 1.0, 1.0, 0.25), edgecolor='white', linewidth=3.0, linestyle='-', zorder=5,
+            )
+        elif roi_center is not None and roi_radius_km is not None:
             c_lat, c_lon = roi_center
-            ax.plot(c_lon, c_lat, "ro", markersize=6, transform=ccrs.PlateCarree(), zorder=5)
+            ax.plot(c_lon, c_lat, "wo", markersize=6, transform=ccrs.PlateCarree(), zorder=5)
             circle_points = cgeo.Geodesic().circle(
                 lon=c_lon, lat=c_lat, radius=roi_radius_km * 1000.0, n_samples=100, endpoint=False,
             )
             geom = sgeom.Polygon(circle_points)
             ax.add_geometries(
                 [geom], crs=ccrs.PlateCarree(),
-                facecolor='none', edgecolor='red', linewidth=2.5, linestyle='--', zorder=5,
+                facecolor=(1.0, 1.0, 1.0, 0.15), edgecolor='white', linewidth=2.5, linestyle='--', zorder=5,
             )
 
         if title:
