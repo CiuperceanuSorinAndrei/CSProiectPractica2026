@@ -39,7 +39,7 @@ class Evaluator:
         rain_rate: np.ndarray,
         float_preds: dict[int, np.ndarray],
         roi_mask: np.ndarray,
-        lat_grid: np.ndarray,
+        pixel_area_km2: np.ndarray,
         horizons: list[tuple[int, str]]
     ) -> tuple[float, dict[str, float]]:
         """Calculeaza volumul curent in ROI si volumul acumulat pe orizonturi.
@@ -47,9 +47,6 @@ class Evaluator:
         Suma volumelor pentru un orizont include toate sferturile de ora de la
         momentul T0 pana la momentul orizontului respectiv (integral discret).
         """
-        # V24 Fix: Eroarea geometrica a fost inversata (imparteam in loc sa inmultim).
-        # Pe proiectia plata, distanta fizica (longitudinala) scade catre poli proporțional cu cos(lat).
-        pixel_area_km2 = 3.0 * (3.0 * np.cos(np.radians(lat_grid)))
         
         # O valoare de 250.0 converteste rata mm/h in metri cubi pentru 1 sfert de ora pe 1 km2
         # (1 mm/h * 0.25 h * 1,000,000 m2 / 1000 = 250 m3)

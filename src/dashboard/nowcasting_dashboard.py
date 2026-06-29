@@ -269,8 +269,19 @@ class NowcastingDashboard:
         self, frame_idx, loc_choice, loc_type, res_select, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
     ):
         import numpy as np
+        from dash.exceptions import PreventUpdate
         from src.geo.reservoir_loader import ReservoirLoader
         from src.dashboard.constants import MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT, ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT
+        
+        ctx = dash.callback_context
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
+        # Caching Inteligent: Evitam recompilarea hartii cand userul modifica input-uri inactive
+        if triggered_id in ("location-select", "manual-lat", "manual-lon") and loc_type != "predefined":
+            raise PreventUpdate
+        if triggered_id == "reservoir-select" and loc_type != "reservoir":
+            raise PreventUpdate
+
         raw_zoom, raw_radius = map_zoom, radius_km
         zoom = min(max(map_zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX) if map_zoom is not None else MAP_ZOOM_DEFAULT
         radius = min(max(radius_km, ROI_RADIUS_MIN), ROI_RADIUS_MAX) if radius_km is not None else ROI_RADIUS_DEFAULT

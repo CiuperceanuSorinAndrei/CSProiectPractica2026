@@ -68,16 +68,28 @@ class AdvectionEngine:
             else:
                 radius = max(5.0, np.sqrt(area / np.pi))
             
-            dist_sq = (x_grid - cx)**2 + (y_grid - cy)**2
+            # Optimizare: Bounding Box local (3-Sigma)
+            y_min = max(0, int(cy - 3 * radius))
+            y_max = min(h, int(cy + 3 * radius + 1))
+            x_min = max(0, int(cx - 3 * radius))
+            x_max = min(w, int(cx + 3 * radius + 1))
+            
+            if y_min >= y_max or x_min >= x_max:
+                continue
+                
+            y_slice = slice(y_min, y_max)
+            x_slice = slice(x_min, x_max)
+            
+            dist_sq = (x_grid[y_slice, x_slice] - cx)**2 + (y_grid[y_slice, x_slice] - cy)**2
             halo = np.exp(-dist_sq / (2.0 * radius**2))
             
             local_multiplier = 1.0 + (cumulative_factor - 1.0) * halo
             
             # Evitam inmultirea multiplicatorilor (explozie) si luam doar impactul maxim
             if cumulative_factor >= 1.0:
-                growth_mask = np.maximum(growth_mask, local_multiplier)
+                growth_mask[y_slice, x_slice] = np.maximum(growth_mask[y_slice, x_slice], local_multiplier)
             else:
-                decay_mask = np.minimum(decay_mask, local_multiplier)
+                decay_mask[y_slice, x_slice] = np.minimum(decay_mask[y_slice, x_slice], local_multiplier)
             
         final_mask = growth_mask * decay_mask
         return np.clip(final_mask, 0.5, 2.0)
@@ -97,6 +109,7 @@ class AdvectionEngine:
                          de la 1 la max_step, pentru integrarea volumetrica corecta.
         """
         grid_h, grid_w = rain_rate.shape
+        rain_rate = np.nan_to_num(rain_rate, nan=0.0).astype(np.float32)
         y_grid, x_grid = np.mgrid[0:grid_h, 0:grid_w].astype(np.float32)
         
         if flow is None:
@@ -127,13 +140,48 @@ class AdvectionEngine:
         
         # 1. Advectie Semi-Lagrangiana cu Traiectorii (Zero-Diffusion)
         for step in range(1, max_step + 1):
-            # Evaluam viteza vantului la pozitia precedenta de plecare
-            flow_at_p_x = cv2.remap(flow_x, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            flow_at_p_y = cv2.remap(flow_y, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            # Local Adaptive Weighting: Blend flow with Kalman predictions
+            blended_flow_x = flow_x.copy()
+            blended_flow_y = flow_y.copy()
+            
+            for c in valid_cells:
+                cx = c.get("centroid_x", grid_w / 2.0) + c.get("v_x", 0.0) * step + 0.5 * c.get("a_x", 0.0) * (step ** 2)
+                cy = c.get("centroid_y", grid_h / 2.0) + c.get("v_y", 0.0) * step + 0.5 * c.get("a_y", 0.0) * (step ** 2)
+                
+                vx = c.get("v_x", 0.0) + c.get("a_x", 0.0) * step
+                vy = c.get("v_y", 0.0) + c.get("a_y", 0.0) * step
+                
+                area = max(1.0, c.get("predicted_area_kalman", 1.0))
+                radius = max(5.0, np.sqrt(area / np.pi))
+                
+                # Optimizare: Bounding Box local (3-Sigma)
+                y_min = max(0, int(cy - 3 * radius))
+                y_max = min(grid_h, int(cy + 3 * radius + 1))
+                x_min = max(0, int(cx - 3 * radius))
+                x_max = min(grid_w, int(cx + 3 * radius + 1))
+                
+                if y_min >= y_max or x_min >= x_max:
+                    continue
+                    
+                y_slice = slice(y_min, y_max)
+                x_slice = slice(x_min, x_max)
+                
+                dist_sq = (x_grid[y_slice, x_slice] - cx)**2 + (y_grid[y_slice, x_slice] - cy)**2
+                weight = np.exp(-dist_sq / (2.0 * radius**2))
+                
+                blended_flow_x[y_slice, x_slice] = blended_flow_x[y_slice, x_slice] * (1 - weight) + vx * weight
+                blended_flow_y[y_slice, x_slice] = blended_flow_y[y_slice, x_slice] * (1 - weight) + vy * weight
+
+            blended_flow_x = blended_flow_x.astype(np.float32)
+            blended_flow_y = blended_flow_y.astype(np.float32)
+
+            # Evaluam viteza vantului blend-uita la pozitia precedenta de plecare
+            flow_at_p_x = cv2.remap(blended_flow_x, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            flow_at_p_y = cv2.remap(blended_flow_y, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             
             # Facem inca un pas inapoi in timp pentru a gasi originea
-            map_x = map_x - flow_at_p_x
-            map_y = map_y - flow_at_p_y
+            map_x = (map_x - flow_at_p_x).astype(np.float32)
+            map_y = (map_y - flow_at_p_y).astype(np.float32)
             
             # Mutam ploaia O SINGURA DATA de la momentul t=0! Fara blur adaugat recursiv.
             shifted = cv2.remap(

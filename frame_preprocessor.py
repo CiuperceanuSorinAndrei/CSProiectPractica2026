@@ -125,7 +125,8 @@ def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | 
     rr = _read_rain_window(file_path, geom.y_slice, geom.x_slice)
     if rr is None:
         return None
-    rr[rr < 0] = 0.0  # NaN ramane NaN (ca in calea xarray)
+    rr = np.nan_to_num(rr, nan=0.0)
+    rr[rr < 0] = 0.0
 
     max_rain = float(np.max(rr[geom.roi_mask])) if np.any(geom.roi_mask) else 0.0
 

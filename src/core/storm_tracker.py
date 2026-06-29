@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+import copy
 from typing import Any
 
 import numpy as np
@@ -70,7 +71,7 @@ class StormTracker:
 
         # 4. Procesam fiecare celula cu asocierea gasita
         for i, c_cell in enumerate(current_cells):
-            tracked_cell = c_cell.copy()
+            tracked_cell = copy.deepcopy(c_cell)
             tracked_cell["is_tracked"] = False
             tracked_cell["centroid_history"] = list(c_cell.get("centroid_history", []))
             tracked_cell["area_history"] = list(c_cell.get("area_history", []))
