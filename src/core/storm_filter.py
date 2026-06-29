@@ -55,22 +55,42 @@ class StormFilter:
         # Covariance / Uncertainty
         self._kf.P *= 10.0
         
-        # Process Noise (Analytical Block Approximation)
+        # Process Noise (Singer Model Exact Analytical Block)
         self._kf.Q = np.zeros((9, 9))
         
-        def add_q_block(indices, dt, var):
-            q = var * np.array([
-                [dt**5/20, dt**4/8, dt**3/6],
-                [dt**4/8,  dt**3/3, dt**2/2],
-                [dt**3/6,  dt**2/2, dt    ]
-            ])
+        def add_singer_q_block(indices, dt, var, gamma):
+            if gamma >= 1.0:
+                # Fallback la Constant Acceleration (White Noise)
+                q = var * np.array([
+                    [dt**5/20, dt**4/8, dt**3/6],
+                    [dt**4/8,  dt**3/3, dt**2/2],
+                    [dt**3/6,  dt**2/2, dt    ]
+                ])
+            else:
+                alpha = -np.log(gamma) / dt
+                a = alpha * dt
+                sigma2 = var
+                
+                q11 = (sigma2 / alpha**5) * (1 - np.exp(-2*a) + 2*a + (2*a**3)/3 - 2*a**2 - 4*a*np.exp(-a))
+                q12 = (sigma2 / alpha**4) * (np.exp(-2*a) + 1 - 2*np.exp(-a) + 2*a*np.exp(-a) - 2*a + a**2)
+                q13 = (sigma2 / alpha**3) * (1 - np.exp(-2*a) - 2*a*np.exp(-a))
+                q22 = (sigma2 / alpha**3) * (4*np.exp(-a) - 3 - np.exp(-2*a) + 2*a)
+                q23 = (sigma2 / alpha**2) * (np.exp(-2*a) + 1 - 2*np.exp(-a))
+                q33 = (sigma2 / alpha) * (1 - np.exp(-2*a))
+                
+                q = np.array([
+                    [q11, q12, q13],
+                    [q12, q22, q23],
+                    [q13, q23, q33]
+                ])
+                
             for i in range(3):
                 for j in range(3):
                     self._kf.Q[indices[i], indices[j]] = q[i, j]
 
-        add_q_block([0, 2, 4], dt, 0.05)
-        add_q_block([1, 3, 5], dt, 0.05)
-        add_q_block([6, 7, 8], dt, 0.01) # log-space area noise
+        add_singer_q_block([0, 2, 4], dt, 0.05, gamma)
+        add_singer_q_block([1, 3, 5], dt, 0.05, gamma)
+        add_singer_q_block([6, 7, 8], dt, 0.01, gamma) # log-space area noise
         
         # Measurement Noise
         self._kf.R = np.array([
@@ -81,10 +101,18 @@ class StormFilter:
 
     def predict(self) -> None:
         self._kf.predict()
+        self._kf.x[6, 0] = np.clip(self._kf.x[6, 0], -5.0, 20.0)
 
     def update(self, observed_x: float, observed_y: float, observed_area: float) -> None:
         obs_z = np.array([[observed_x], [observed_y], [np.log(max(observed_area, 1.0))]])
-        self._kf.update(obs_z)
+        
+        try:
+            self._kf.update(obs_z)
+        except np.linalg.LinAlgError:
+            # Fallback la modul predict-only dacă matricea inovației este singulară
+            return
+            
+        self._kf.x[6, 0] = np.clip(self._kf.x[6, 0], -5.0, 20.0)
         
         # Joseph Form Covariance Update
         I = np.eye(self._kf.dim_x)
@@ -92,6 +120,15 @@ class StormFilter:
         H = self._kf.H
         I_KH = I - np.dot(K, H)
         self._kf.P = np.dot(np.dot(I_KH, self._kf.P), I_KH.T) + np.dot(np.dot(K, self._kf.R), K.T)
+        
+        # V28: PSD Forcing (Eigen-Decomposition) pentru stabilitate numerica
+        self._kf.P = (self._kf.P + self._kf.P.T) / 2.0
+        try:
+            eigval, eigvec = np.linalg.eigh(self._kf.P)
+            eigval = np.maximum(eigval, 1e-8)
+            self._kf.P = (eigvec * eigval) @ eigvec.T
+        except np.linalg.LinAlgError:
+            pass
 
     @property
     def x(self) -> float:
@@ -129,3 +166,8 @@ class StormFilter:
     @property
     def dd_area(self) -> float:
         return np.exp(self._kf.x[6, 0]) * (self._kf.x[7, 0]**2 + self._kf.x[8, 0])
+
+    @property
+    def positional_uncertainty(self) -> float:
+        """Trace-ul matricei de covarianta pentru coordonatele cinematice (x, y, vx, vy)."""
+        return float(np.trace(self._kf.P[0:4, 0:4]))

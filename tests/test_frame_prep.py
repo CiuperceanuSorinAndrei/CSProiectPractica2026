@@ -1,5 +1,5 @@
 import numpy as np
-from frame_preprocessor import FrameGeometry, preprocess
+from src.io.frame_preprocessor import FrameGeometry, preprocess
 from dataclasses import dataclass
 
 def test_preprocess_nan_filtering():
@@ -12,7 +12,7 @@ def test_preprocess_nan_filtering():
         roi_mask = np.ones((5, 5), dtype=bool)
 
     # Dacă _read_rain_window returnează NaN-uri, preprocess ar trebui să le convertească în 0.0
-    import frame_preprocessor
+    from src.io import frame_preprocessor
     original_read = frame_preprocessor._read_rain_window
     try:
         def mock_read(file_path, y, x):

@@ -6,7 +6,7 @@ import numpy as np
 from src.core.storm_tracker import StormTracker
 from src.core.advection_engine import AdvectionEngine
 from src.core.evaluator import Evaluator
-from frame_preprocessor import FramePrep, FrameGeometry
+from src.io.frame_preprocessor import FramePrep, FrameGeometry
 from config import RAIN_THRESHOLD_MIN
 
 @dataclass
@@ -43,8 +43,9 @@ class FrameProcessor:
         rain_rate = prep.rain_rate
         roi_mask = geom.roi_mask
 
+        import copy
         # Copii superficiale pentru a nu muta celulele memoizate
-        cells_for_tracking = [dict(c) for c in prep.filtered_cells]
+        cells_for_tracking = [copy.copy(c) for c in prep.filtered_cells]
         tracked_cells, flow = tracker.track(cells_for_tracking, rain_rate)
 
         horizons = [(2, "30m"), (4, "1h"), (8, "2h")]
@@ -64,13 +65,16 @@ class FrameProcessor:
             rain_rate, float_preds, roi_mask, geom.pixel_area_km2, horizons
         )
 
-        valid_errors = [c.get("prediction_error_pixels", 0.0) for c in tracked_cells if c.get("is_tracked", False)]
-        size_errors = [c.get("size_error_percent", 0.0) for c in tracked_cells if c.get("is_tracked", False)]
+        valid_errors = [getattr(c, "prediction_error_pixels", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
+        size_errors = [getattr(c, "size_error_percent", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
 
         rain_rate_masked = np.ma.masked_where(rain_rate < RAIN_THRESHOLD_MIN, rain_rate)
         
+        # V27: DTO Adapter - Convertim obiectele de domeniu în dicționare serializabile pentru Dash
+        tracked_cells_dicts = [c.as_dict() for c in tracked_cells]
+        
         return FrameResult(
-            tracked_cells=tracked_cells,
+            tracked_cells=tracked_cells_dicts,
             rain_rate=rain_rate,
             rain_rate_masked=rain_rate_masked,
             lon_grid=geom.lon_grid,
@@ -78,7 +82,7 @@ class FrameProcessor:
             max_rain=prep.max_rain,
             mean_centroid_error=float(np.mean(valid_errors)) if valid_errors else 0.0,
             mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
-            num_tracked=len([c for c in tracked_cells if c.get("is_tracked", False)]),
+            num_tracked=len([c for c in tracked_cells if getattr(c, "is_tracked", False)]),
             roi_volume_m3=roi_volume_m3,
             predicted_roi_volume_m3=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,

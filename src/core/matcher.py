@@ -15,37 +15,30 @@ class Matcher:
     def _coords_iou(coords_a: np.ndarray | list | None, coords_b: np.ndarray | list | None) -> float:
         if coords_a is None or coords_b is None or len(coords_a) == 0 or len(coords_b) == 0:
             return 0.0
-        arr_a = np.asarray(coords_a)
-        arr_b = np.asarray(coords_b)
+            
+        # V28 Optimizare Memorie & CPU: Fara Python Sets (O(N) gc bottleneck).
+        # Convertim coordonatele Nx2 intr-un format structurat pentru np.intersect1d.
+        arr_a = np.ascontiguousarray(coords_a)
+        arr_b = np.ascontiguousarray(coords_b)
         
-        min_a, max_a = np.min(arr_a, axis=0), np.max(arr_a, axis=0)
-        min_b, max_b = np.min(arr_b, axis=0), np.max(arr_b, axis=0)
-        if (min_a[0] > max_b[0] or max_a[0] < min_b[0] or 
-            min_a[1] > max_b[1] or max_a[1] < min_b[1]):
-            return 0.0
-
-        min_y, min_x = min(min_a[0], min_b[0]), min(min_a[1], min_b[1])
-        max_y, max_x = max(max_a[0], max_b[0]), max(max_a[1], max_b[1])
+        # Tip de date void pentru a privi un rând întreg (y, x) ca un singur element.
+        void_dt = np.dtype((np.void, arr_a.dtype.itemsize * arr_a.shape[1]))
         
-        h = max_y - min_y + 1
-        w = max_x - min_x + 1
+        view_a = arr_a.view(void_dt).ravel()
+        view_b = arr_b.view(void_dt).ravel()
         
-        mask_a = np.zeros((h, w), dtype=bool)
-        mask_b = np.zeros((h, w), dtype=bool)
-        
-        mask_a[arr_a[:, 0] - min_y, arr_a[:, 1] - min_x] = True
-        mask_b[arr_b[:, 0] - min_y, arr_b[:, 1] - min_x] = True
-        
-        intersection = float(np.sum(mask_a & mask_b))
+        # assume_unique=True este extrem de rapid, fiindcă pixelii unei celule sunt unici prin definitie
+        intersection = np.intersect1d(view_a, view_b, assume_unique=True).size
         if intersection == 0:
             return 0.0
-        union = float(np.sum(mask_a | mask_b))
-        return intersection / union
+            
+        union = len(arr_a) + len(arr_b) - intersection
+        return float(intersection) / float(union)
 
     @staticmethod
     def match_cells(
-        current_cells: list[dict],
-        previous_cells: list[dict],
+        current_cells: list[StormCell],
+        previous_cells: list[StormCell],
         kalman_bank: dict[str, StormFilter],
         max_dist_pixels: int = 15
     ) -> dict[int, int]:
@@ -60,7 +53,7 @@ class Matcher:
         prev_coords = []
         valid_prev_indices = []
         for j, p_cell in enumerate(previous_cells):
-            p_id = p_cell.get("cell_id")
+            p_id = p_cell.cell_id
             if p_id in kalman_bank:
                 kf = kalman_bank[p_id]
                 prev_coords.append([kf.y, kf.x])
@@ -70,7 +63,7 @@ class Matcher:
             return {}
 
         prev_coords_arr = np.array(prev_coords)
-        curr_coords_arr = np.array([[c["centroid_y"], c["centroid_x"]] for c in current_cells])
+        curr_coords_arr = np.array([[c.centroid_y, c.centroid_x] for c in current_cells])
 
         # KD-Tree pre-filtering
         tree = cKDTree(prev_coords_arr)
@@ -78,12 +71,12 @@ class Matcher:
         # Cautam toti vecinii pe o raza dubla pentru a include split-uri si erori
         radius_limit = max_dist_pixels * 2.0
         
-        cost_matrix = np.full((num_curr, num_prev), 1000.0)
+        edges = []
         
         for i, c_cell in enumerate(current_cells):
-            c_area = c_cell.get("area_pixels", 1.0)
-            c_volume = c_cell.get("volume", c_area)
-            c_y, c_x = c_cell["centroid_y"], c_cell["centroid_x"]
+            c_area = c_cell.area_pixels if c_cell.area_pixels > 0 else 1.0
+            c_volume = c_cell.volume if c_cell.volume > 0.0 else c_area
+            c_y, c_x = c_cell.centroid_y, c_cell.centroid_x
             
             # Query the KDTree
             indices = tree.query_ball_point([c_y, c_x], r=radius_limit)
@@ -96,7 +89,7 @@ class Matcher:
                 
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
                 
-                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.get("area_pixels", 1.0)), 1.0)) * 0.9, 14.0, 32.0)
+                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 0.9, 14.0, 32.0)
                 actual_limit = max(max_dist_pixels, adaptive_radius)
                 
                 if dist > actual_limit:
@@ -104,25 +97,66 @@ class Matcher:
                     
                 dist_norm = dist / actual_limit
                 
-                p_area = p_cell.get("area_pixels", 1.0)
+                p_area = p_cell.area_pixels if p_cell.area_pixels > 0 else 1.0
                 area_ratio = min(c_area, p_area) / (max(c_area, p_area) + 1e-5)
                 area_penalty = 1.0 - area_ratio
 
-                p_volume = p_cell.get("volume", p_area)
+                p_volume = p_cell.volume if p_cell.volume > 0.0 else p_area
                 volume_ratio = min(c_volume, p_volume) / (max(c_volume, p_volume) + 1e-5)
                 volume_penalty = 1.0 - volume_ratio
 
-                iou = Matcher._coords_iou(c_cell.get("coords"), p_cell.get("coords"))
+                iou = Matcher._coords_iou(c_cell.coords, p_cell.coords)
                 iou_penalty = 1.0 - iou
 
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
-                cost_matrix[i, j] = hybrid_cost
+                if hybrid_cost < 500.0:
+                    edges.append((i, j, hybrid_cost))
 
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        from collections import defaultdict
         
+        # Build adjacency list for connected components
+        adj = defaultdict(list)
+        for u, v, w in edges:
+            adj[f"C_{u}"].append(f"P_{v}")
+            adj[f"P_{v}"].append(f"C_{u}")
+            
+        visited = set()
+        components = []
+        
+        for u, v, w in edges:
+            node = f"C_{u}"
+            if node not in visited:
+                comp_C = []
+                comp_P = []
+                # BFS
+                q = [node]
+                visited.add(node)
+                while q:
+                    curr = q.pop(0)
+                    if curr.startswith("C_"):
+                        comp_C.append(int(curr[2:]))
+                    else:
+                        comp_P.append(int(curr[2:]))
+                    for neighbor in adj[curr]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            q.append(neighbor)
+                components.append((comp_C, comp_P))
+                
         matches = {}
-        for r, c in zip(row_ind, col_ind):
-            if cost_matrix[r, c] < 500.0:  # Prag valid de asociere
-                matches[r] = c
+        edge_costs = {(u, v): w for u, v, w in edges}
+        
+        for comp_C, comp_P in components:
+            # Build sub-matrix for this component
+            sub_cost = np.full((len(comp_C), len(comp_P)), 1000.0)
+            for r_idx, u in enumerate(comp_C):
+                for c_idx, v in enumerate(comp_P):
+                    if (u, v) in edge_costs:
+                        sub_cost[r_idx, c_idx] = edge_costs[(u, v)]
+                        
+            r_ind, c_ind = linear_sum_assignment(sub_cost)
+            for r, c in zip(r_ind, c_ind):
+                if sub_cost[r, c] < 500.0:
+                    matches[comp_C[r]] = comp_P[c]
 
         return matches

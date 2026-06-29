@@ -14,9 +14,13 @@ class NetCdfReader:
         self._file_path = file_path
 
     def load_data(self) -> xr.Dataset:
-        """Incarca un fisier NetCDF (.nc) in memorie."""
+        """Incarca un fisier NetCDF (.nc) in memorie in mod sigur."""
         try:
-            return xr.open_dataset(self._file_path, engine='netcdf4')
+            with xr.open_dataset(self._file_path, engine='netcdf4') as ds:
+                # Fortam incarcarea in RAM si decuplarea de fisierul fizic
+                # pentru a preveni 'Resource leaks' si block-uri pe fisiere (ex. pe Windows)
+                ds_in_memory = ds.load()
+            return ds_in_memory
         except Exception as e:
             print(f"Eroare la citirea NetCDF: {e}")
             return None

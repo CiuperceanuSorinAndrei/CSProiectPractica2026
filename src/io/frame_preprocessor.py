@@ -35,11 +35,13 @@ class FrameGeometry:
     x_slice: slice
 
 
+from src.core.domain import StormCell
+
 @dataclass
 class FramePrep:
     """Rezultatul etapei stateless de preprocesare a unui cadru (memoizabil per fisier)."""
     rain_rate: np.ndarray
-    filtered_cells: list[dict[str, Any]]
+    filtered_cells: list[StormCell]
     max_rain: float
 
 
@@ -125,7 +127,7 @@ def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | 
     rr = _read_rain_window(file_path, geom.y_slice, geom.x_slice)
     if rr is None:
         return None
-    rr = np.nan_to_num(rr, nan=0.0)
+    rr = np.nan_to_num(rr, nan=0.0, posinf=0.0, neginf=0.0)
     rr[rr < 0] = 0.0
 
     max_rain = float(np.max(rr[geom.roi_mask])) if np.any(geom.roi_mask) else 0.0
@@ -134,8 +136,8 @@ def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | 
     lon_min, lon_max, lat_min, lat_max = bbox
     filtered_cells = []
     for cell in _detector.extract_cells(rr):
-        y_idx = int(cell["centroid_y"])
-        x_idx = int(cell["centroid_x"])
+        y_idx = int(cell.centroid_y)
+        x_idx = int(cell.centroid_x)
         if 0 <= y_idx < lat_grid.shape[0] and 0 <= x_idx < lon_grid.shape[1]:
             cell_lon = lon_grid[y_idx, x_idx]
             cell_lat = lat_grid[y_idx, x_idx]
@@ -144,7 +146,7 @@ def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | 
                 and lon_min <= cell_lon <= lon_max
                 and lat_min <= cell_lat <= lat_max
             ):
-                cell["geo_lon"] = float(cell_lon)
-                cell["geo_lat"] = float(cell_lat)
+                cell.geo_lon = float(cell_lon)
+                cell.geo_lat = float(cell_lat)
                 filtered_cells.append(cell)
     return FramePrep(rain_rate=rr, filtered_cells=filtered_cells, max_rain=max_rain)

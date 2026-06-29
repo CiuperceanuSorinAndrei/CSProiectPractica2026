@@ -2,7 +2,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from frame_preprocessor import FrameGeometry, FramePrep, compute_geometry, preprocess
+from src.io.frame_preprocessor import FrameGeometry, FramePrep, compute_geometry, preprocess
 
 _PREP_CACHE_MAXSIZE = 256
 _WARMUP_GRACE_S = 0.6
