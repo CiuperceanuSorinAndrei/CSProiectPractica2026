@@ -34,7 +34,7 @@ class StormCellDetector:
 
         struct = np.ones((3, 3))
         large_mask = ndi.binary_opening(rain_matrix >= large_thr, structure=struct)
-        
+
         # Etichetare simpla a componentelor conexe
         large_labels = self._label_connected_components(rain_matrix, large_mask)
         cells = self._extract_components_from_labels(rain_matrix, large_labels, self._min_size)
@@ -43,6 +43,13 @@ class StormCellDetector:
         if abs(small_thr - large_thr) < 1e-5 and self._small_cell_max_area is None:
             return cells
 
+        self._append_non_overlapping_small_cells(rain_matrix, cells, small_thr, struct)
+        return cells
+
+    def _append_non_overlapping_small_cells(
+        self, rain_matrix: np.ndarray, cells: list[StormCell], small_thr: float, struct: np.ndarray
+    ) -> None:
+        """Pass 2: adauga (in-place) celulele mici care NU se suprapun cu nucleele mari deja gasite."""
         # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
         seen_mask = np.zeros(rain_matrix.shape, dtype=bool)
         for cell in cells:
@@ -50,7 +57,6 @@ class StormCellDetector:
             if len(coords) > 0:
                 seen_mask[coords[:, 0], coords[:, 1]] = True
 
-        # Adaugam celulele mici care nu se suprapun
         small_mask = ndi.binary_opening(rain_matrix >= small_thr, structure=struct)
         small_labels = self._label_connected_components(rain_matrix, small_mask)
         small_cells = self._extract_components_from_labels(
@@ -66,8 +72,6 @@ class StormCellDetector:
             cell.id = next_id
             next_id += 1
             cells.append(cell)
-
-        return cells
 
     @staticmethod
     def _label_connected_components(rain_matrix: np.ndarray, base_mask: np.ndarray) -> np.ndarray:

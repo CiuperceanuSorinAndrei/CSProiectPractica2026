@@ -29,44 +29,57 @@ class ReservoirLoader:
             proj_transformer = Transformer.from_crs("EPSG:31700", "EPSG:4326", always_xy=True)
 
             for rec, shp in zip(records, shapes):
-                denumire = rec.denumire
-                if not denumire or str(denumire).strip() == "":
-                    continue
-                    
-                name = str(denumire).strip().title()
-                
-                # Evitam duplicatele (daca sunt mai multe poligoane cu acelasi nume)
-                original_name = name
-                idx = 2
-                while name in reservoirs:
-                    name = f"{original_name} {idx}"
-                    idx += 1
+                entry = ReservoirLoader._build_reservoir_entry(rec, shp, proj_transformer, reservoirs)
+                if entry is not None:
+                    name, data = entry
+                    reservoirs[name] = data
 
-                geom_stereo = shape(shp)
-                if geom_stereo.is_empty:
-                    continue
-                    
-                # Transformam poligonul din metri (Stereo 70) in grade (WGS84)
-                geom = transform(proj_transformer.transform, geom_stereo)
-
-                bounds = geom.bounds  # (min_lon, min_lat, max_lon, max_lat)
-
-                # Calculam o raza acoperitoare aproximativa (latimea/inaltimea in km)
-                delta_lon = bounds[2] - bounds[0]
-                delta_lat = bounds[3] - bounds[1]
-                radius_km = max(delta_lon * 80.0, delta_lat * 111.0) / 2.0 + 5.0  # +5km padding
-
-                reservoirs[name] = {
-                    "name": name,
-                    "polygon": geom,
-                    "bounds": bounds,
-                    "center": (geom.centroid.y, geom.centroid.x),  # (lat, lon)
-                    "radius_km": radius_km
-                }
-                
             sf.close()
             ReservoirLoader._cache = reservoirs
         except Exception as e:
             print(f"Eroare la incarcarea lacurilor de acumulare: {e}")
-            
+
         return ReservoirLoader._cache if ReservoirLoader._cache else {}
+
+    @staticmethod
+    def _build_reservoir_entry(rec, shp, transformer, existing: dict):
+        """Construieste o intrare (nume, date) dintr-un record+shape; None daca lipseste numele sau e gol.
+
+        Reproiecteaza geometria din Stereo 70 (EPSG:31700) in WGS84 si dezambiguizeaza numele
+        duplicate consultand `existing` (lacurile deja adaugate).
+        """
+        denumire = rec.denumire
+        if not denumire or str(denumire).strip() == "":
+            return None
+
+        name = str(denumire).strip().title()
+
+        # Evitam duplicatele (daca sunt mai multe poligoane cu acelasi nume)
+        original_name = name
+        idx = 2
+        while name in existing:
+            name = f"{original_name} {idx}"
+            idx += 1
+
+        geom_stereo = shape(shp)
+        if geom_stereo.is_empty:
+            return None
+
+        # Transformam poligonul din metri (Stereo 70) in grade (WGS84)
+        geom = transform(transformer.transform, geom_stereo)
+
+        bounds = geom.bounds  # (min_lon, min_lat, max_lon, max_lat)
+
+        # Calculam o raza acoperitoare aproximativa (latimea/inaltimea in km)
+        delta_lon = bounds[2] - bounds[0]
+        delta_lat = bounds[3] - bounds[1]
+        radius_km = max(delta_lon * 80.0, delta_lat * 111.0) / 2.0 + 5.0  # +5km padding
+
+        data = {
+            "name": name,
+            "polygon": geom,
+            "bounds": bounds,
+            "center": (geom.centroid.y, geom.centroid.x),  # (lat, lon)
+            "radius_km": radius_km
+        }
+        return name, data

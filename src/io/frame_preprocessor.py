@@ -18,7 +18,7 @@ import numpy as np
 import netCDF4
 
 from src.geo.projection import GeoProjection
-from src.core.storm_cell_detector import StormCellDetector
+from src.core.detection.storm_cell_detector import StormCellDetector
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
 

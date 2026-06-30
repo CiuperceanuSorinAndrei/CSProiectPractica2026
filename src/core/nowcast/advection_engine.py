@@ -12,8 +12,7 @@ import scipy.sparse as sp
 from scipy.spatial.distance import cdist
 
 from src.core.domain import StormCell
-from src.core.algorithms_config import config as algo_config
-from src.core.reaction_diffusion import update_energy, lifecycle
+from src.core.nowcast.reaction_diffusion import update_energy, lifecycle
 
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
@@ -246,38 +245,11 @@ class AdvectionEngine:
         
         for step in range(1, max_step + 1):
             # 1. Update Kinematics (Advectie centroid)
-            for c in simulated_cells:
-                gamma = 0.8
-                term_a = (2*step - (1+gamma)*(1-gamma**step)/(1-gamma)) / (2*(1-gamma))
-                c.predicted_centroid_x = c.centroid_x + c.v_x * step + c.a_x * term_a
-                c.predicted_centroid_y = c.centroid_y + c.v_y * step + c.a_y * term_a
-                
+            AdvectionEngine._advance_centroids(simulated_cells, step)
+
             # 2. Update Reaction-Diffusion (Energetics)
-            if len(simulated_cells) > 0:
-                coords = np.array([[c.predicted_centroid_x, c.predicted_centroid_y] for c in simulated_cells])
-                if len(coords) > 1:
-                    dist_matrix = cdist(coords, coords)
-                else:
-                    dist_matrix = np.zeros((1, 1))
-                
-                updates = []
-                for i, c in enumerate(simulated_cells):
-                    if len(coords) > 1:
-                        neighbor_indices = np.where((dist_matrix[i] < 50.0) & (dist_matrix[i] > 0))[0]
-                        neighbors_E = np.array([simulated_cells[j].E for j in neighbor_indices])
-                    else:
-                        neighbors_E = np.array([])
-                        
-                    E_new, dE_new, R_applied = update_energy(c.E, neighbors_E, c.dE)
-                    updates.append((E_new, dE_new, R_applied))
-                    
-                for i, c in enumerate(simulated_cells):
-                    E_new, dE_new, R_applied = updates[i]
-                    c.E = max(E_new, 1e-6)
-                    c.dE = dE_new
-                    c.cumulative_R *= R_applied
-                    c.lifecycle_phase = lifecycle(c.E, c.dE)
-            
+            AdvectionEngine._advance_energetics(simulated_cells)
+
             blended_flow_x, blended_flow_y = AdvectionEngine._blend_kinematics(
                 step, flow_x, flow_y, valid_cells, grid_h, grid_w, x_grid, y_grid
             )
@@ -311,5 +283,47 @@ class AdvectionEngine:
                 
                 base_mask = (shifted_grown_blurred >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
                 sparse_preds[name] = sp.csr_matrix(base_mask)
-            
+
         return sparse_preds, float_preds
+
+    @staticmethod
+    def _advance_centroids(simulated_cells: list[StormCell], step: int) -> None:
+        """Advectie semi-Lagrangiana a centroizilor (model Singer amortizat, gamma=0.8).
+
+        term_a depinde doar de `step`, deci il calculam o singura data pentru toate celulele.
+        """
+        gamma = 0.8
+        term_a = (2*step - (1+gamma)*(1-gamma**step)/(1-gamma)) / (2*(1-gamma))
+        for c in simulated_cells:
+            c.predicted_centroid_x = c.centroid_x + c.v_x * step + c.a_x * term_a
+            c.predicted_centroid_y = c.centroid_y + c.v_y * step + c.a_y * term_a
+
+    @staticmethod
+    def _advance_energetics(simulated_cells: list[StormCell]) -> None:
+        """Reaction-Diffusion (Phase 4): difuzie spatiala a energiei E intre vecini + reactie locala."""
+        if not simulated_cells:
+            return
+
+        coords = np.array([[c.predicted_centroid_x, c.predicted_centroid_y] for c in simulated_cells])
+        if len(coords) > 1:
+            dist_matrix = cdist(coords, coords)
+        else:
+            dist_matrix = np.zeros((1, 1))
+
+        updates = []
+        for i, c in enumerate(simulated_cells):
+            if len(coords) > 1:
+                neighbor_indices = np.where((dist_matrix[i] < 50.0) & (dist_matrix[i] > 0))[0]
+                neighbors_E = np.array([simulated_cells[j].E for j in neighbor_indices])
+            else:
+                neighbors_E = np.array([])
+
+            E_new, dE_new, R_applied = update_energy(c.E, neighbors_E, c.dE)
+            updates.append((E_new, dE_new, R_applied))
+
+        for i, c in enumerate(simulated_cells):
+            E_new, dE_new, R_applied = updates[i]
+            c.E = max(E_new, 1e-6)
+            c.dE = dE_new
+            c.cumulative_R *= R_applied
+            c.lifecycle_phase = lifecycle(c.E, c.dE)

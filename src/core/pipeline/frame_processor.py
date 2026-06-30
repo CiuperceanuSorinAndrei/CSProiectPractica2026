@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
-from src.core.storm_tracker import StormTracker
-from src.core.advection_engine import AdvectionEngine
-from src.core.evaluator import Evaluator
+from src.core.tracking.storm_tracker import StormTracker
+from src.core.nowcast.advection_engine import AdvectionEngine
+from src.core.metrics.evaluator import Evaluator
 from src.io.frame_preprocessor import FramePrep, FrameGeometry
 from config import RAIN_THRESHOLD_MIN
 

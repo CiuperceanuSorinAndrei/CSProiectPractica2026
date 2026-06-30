@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from src.core.storm_filter import StormFilter
-from src.core.evaluator import Evaluator
+from src.core.tracking.storm_filter import StormFilter
+from src.core.metrics.evaluator import Evaluator
 
 def test_storm_filter_log_space_area():
     # Test area is properly exponentiated

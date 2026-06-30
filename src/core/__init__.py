@@ -1,6 +1,16 @@
-"""Pachet core: detectie celule, tracking cinematic si metrici de validare."""
-from .storm_cell_detector import StormCellDetector
-from .storm_tracker import StormTracker
-from .forecast_metrics import ForecastMetrics
+"""Pachet core: detectie celule, tracking cinematic, nowcasting si metrici de validare.
+
+Sub-pachete:
+  - detection: detectie celule intr-un singur cadru
+  - tracking:  matching KD-Tree + filtre Kalman + optical flow + lifecycle
+  - nowcast:   extrapolare prin advectie + energetica Reaction-Diffusion
+  - metrics:   scoruri de validare (CSI/FAR/POD/FSS) + integrare volumetrica
+  - pipeline:  orchestrare per-cadru + cache de preprocesare
+
+`domain` (StormCell) si `algorithms_config` raman la radacina, fiind partajate de toate sub-pachetele.
+"""
+from .detection.storm_cell_detector import StormCellDetector
+from .tracking.storm_tracker import StormTracker
+from .metrics.forecast_metrics import ForecastMetrics
 
 __all__ = ["StormCellDetector", "StormTracker", "ForecastMetrics"]

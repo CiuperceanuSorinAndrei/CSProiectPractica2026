@@ -5,13 +5,19 @@ from src.dashboard.session_manager import SessionManager
 
 
 class ReportBuilder:
-    
+
+    @staticmethod
+    def _avg_metric(hist, key: str, horizon: str) -> float:
+        """Media valorilor strict pozitive pentru o metrica (csi/far/pod/fss) la un orizont dat."""
+        vals = [m.get(horizon, 0) for m in hist.metrics_history[key] if m.get(horizon, 0) > 0]
+        return sum(vals) / len(vals) if vals else 0.0
+
     @staticmethod
     def format_metrics(session_id: str, result, session_manager: SessionManager):
         _, hist = session_manager.get_state(session_id)
-        
+
         hist_vol_str = f"{hist.total_volume_m3 / 1000.0:.1f} mii"
-        
+
         curr_vol = result.roi_volume_m3
         curr_vol_str = f"{curr_vol / 1000.0:.1f} mii"
 
@@ -21,28 +27,17 @@ class ReportBuilder:
             f"1h: {vols.get('1h', 0)/1000.0:.0f} | "
             f"2h: {vols.get('2h', 0)/1000.0:.0f} mii"
         )
-        
+
         max_rain_str = f"{result.max_rain:.1f}"
 
-        csi = result.global_csi
-        far = result.global_far
-        pod = result.global_pod
-        fss = result.global_fss
-
         def _fmt(horizon):
-            csis = [m.get(horizon, 0) for m in hist.metrics_history["csi"] if m.get(horizon, 0) > 0]
-            fars = [m.get(horizon, 0) for m in hist.metrics_history["far"] if m.get(horizon, 0) > 0]
-            pods = [m.get(horizon, 0) for m in hist.metrics_history["pod"] if m.get(horizon, 0) > 0]
-            fsss = [m.get(horizon, 0) for m in hist.metrics_history["fss"] if m.get(horizon, 0) > 0]
-            
-            if not csis and not fars:
+            c = ReportBuilder._avg_metric(hist, "csi", horizon)
+            f = ReportBuilder._avg_metric(hist, "far", horizon)
+            if c == 0.0 and f == 0.0:
                 return "Așteptare..."
-                
-            c = sum(csis)/len(csis) if csis else 0.0
-            f = sum(fars)/len(fars) if fars else 0.0
-            p = sum(pods)/len(pods) if pods else 0.0
-            fs = sum(fsss)/len(fsss) if fsss else 0.0
-            
+
+            p = ReportBuilder._avg_metric(hist, "pod", horizon)
+            fs = ReportBuilder._avg_metric(hist, "fss", horizon)
             return (
                 f"CSI: {c:.2f} | FAR: {f:.2f}\n"
                 f"POD: {p:.2f} | FSS: {fs:.2f}"
@@ -62,7 +57,7 @@ class ReportBuilder:
         in_roi = "Nu"
         if curr_vol > 0:
             in_roi = "Da (Ploaie detectată)"
-            
+
         return hist_vol_str, curr_vol_str, pred_vol_str, max_rain_str, m_30m, m_1h, m_2h, m_tot, tracked, in_roi
 
     @staticmethod
@@ -102,6 +97,52 @@ class ReportBuilder:
         ])
 
     @staticmethod
+    def _build_kinematic_rows(hist) -> list:
+        """Randuri tabel cu mediile CSI/FAR/POD/FSS pe orizonturi (performanta cinematica)."""
+        rows = []
+        for horizon in ["30m", "1h", "2h"]:
+            c = ReportBuilder._avg_metric(hist, "csi", horizon)
+            f = ReportBuilder._avg_metric(hist, "far", horizon)
+            p = ReportBuilder._avg_metric(hist, "pod", horizon)
+            fs = ReportBuilder._avg_metric(hist, "fss", horizon)
+
+            rows.append(html.Tr([
+                html.Td(horizon), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"),
+                html.Td(f"{p:.2f}"), html.Td(f"{fs:.2f}")
+            ]))
+        return rows
+
+    @staticmethod
+    def _build_volume_rows(hist) -> list:
+        """Randuri tabel cu volumul real vs prezis acumulat per orizont (aliniat corect in timp)."""
+        vol_rows = []
+        horizon_steps = {"30m": 2, "1h": 4, "2h": 8}
+
+        for horizon in ["30m", "1h", "2h"]:
+            steps = horizon_steps[horizon]
+
+            # Daca nu avem destule cadre pentru a alinia orizontul, trecem peste sau punem 0
+            if len(hist.true_volumes) > steps and len(hist.pred_volumes[horizon]) > steps:
+                # Volumul real este suma de la pasul 'steps' pana la final
+                aligned_true = hist.true_volumes[steps:]
+                # Volumul prezis este suma prezicerilor facute cu 'steps' in urma, pentru cadrele de azi
+                aligned_pred = hist.pred_volumes[horizon][:-steps]
+
+                vol_real_sum = sum(aligned_true) / 1000.0
+                vol_pred_sum = sum(aligned_pred) / 1000.0
+            else:
+                vol_real_sum = hist.total_volume_m3 / 1000.0
+                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
+
+            delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
+
+            vol_rows.append(html.Tr([
+                html.Td(horizon), html.Td(f"{vol_real_sum:.0f}"),
+                html.Td(f"{vol_pred_sum:.0f}"), html.Td(f"{delta_pct:+.1f}%")
+            ]))
+        return vol_rows
+
+    @staticmethod
     def build_final_report(session_id: str, run_mode: str, frame_idx: int, total_frames: int, session_manager: SessionManager) -> html.Div | None:
         if run_mode == "live" or frame_idx < total_frames - 1:
             return None
@@ -110,51 +151,8 @@ class ReportBuilder:
         if hist.frames_processed == 0:
             return None
 
-        # Calculam tabelul de performanta
-        rows = []
-        for horizon in ["30m", "1h", "2h"]:
-            csis = [m.get(horizon, 0) for m in hist.metrics_history["csi"] if m.get(horizon, 0) > 0]
-            fars = [m.get(horizon, 0) for m in hist.metrics_history["far"] if m.get(horizon, 0) > 0]
-            pods = [m.get(horizon, 0) for m in hist.metrics_history["pod"] if m.get(horizon, 0) > 0]
-            fsss = [m.get(horizon, 0) for m in hist.metrics_history["fss"] if m.get(horizon, 0) > 0]
-            
-            c = sum(csis)/len(csis) if csis else 0.0
-            f = sum(fars)/len(fars) if fars else 0.0
-            p = sum(pods)/len(pods) if pods else 0.0
-            fs = sum(fsss)/len(fsss) if fsss else 0.0
-            
-            rows.append(html.Tr([
-                html.Td(horizon), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"), 
-                html.Td(f"{p:.2f}"), html.Td(f"{fs:.2f}")
-            ]))
-
-        # Calculam integrarea volumetrica totala per orizont aliniata corect in timp
-        vol_rows = []
-        
-        horizon_steps = {"30m": 2, "1h": 4, "2h": 8}
-        
-        for horizon in ["30m", "1h", "2h"]:
-            steps = horizon_steps[horizon]
-            
-            # Daca nu avem destule cadre pentru a alinia orizontul, trecem peste sau punem 0
-            if len(hist.true_volumes) > steps and len(hist.pred_volumes[horizon]) > steps:
-                # Volumul real este suma de la pasul 'steps' pana la final
-                aligned_true = hist.true_volumes[steps:]
-                # Volumul prezis este suma prezicerilor facute cu 'steps' in urma, pentru cadrele de azi
-                aligned_pred = hist.pred_volumes[horizon][:-steps]
-                
-                vol_real_sum = sum(aligned_true) / 1000.0
-                vol_pred_sum = sum(aligned_pred) / 1000.0
-            else:
-                vol_real_sum = hist.total_volume_m3 / 1000.0
-                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
-            
-            delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
-            
-            vol_rows.append(html.Tr([
-                html.Td(horizon), html.Td(f"{vol_real_sum:.0f}"), 
-                html.Td(f"{vol_pred_sum:.0f}"), html.Td(f"{delta_pct:+.1f}%")
-            ]))
+        rows = ReportBuilder._build_kinematic_rows(hist)
+        vol_rows = ReportBuilder._build_volume_rows(hist)
 
         return html.Div([
             dbc.Alert(

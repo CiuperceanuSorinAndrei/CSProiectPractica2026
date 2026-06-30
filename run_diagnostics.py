@@ -2,9 +2,9 @@ import os
 import glob
 import numpy as np
 
-from src.core.storm_tracker import StormTracker
-from src.core.matcher import Matcher
-from src.core.frame_processor import FrameProcessor
+from src.core.tracking.storm_tracker import StormTracker
+from src.core.tracking.matcher import Matcher
+from src.core.pipeline.frame_processor import FrameProcessor
 from src.io.frame_preprocessor import compute_geometry, preprocess
 from src.diagnostics.autopsier import Autopsier
 
@@ -74,7 +74,7 @@ def run_evaluation_pipeline(data_folder: str, forecast_horizon_steps: int = 2):
             future_c.centroid_x += future_c.v_x * step + future_c.a_x * term_a
             future_c.centroid_y += future_c.v_y * step + future_c.a_y * term_a
             
-            from src.core.reaction_diffusion import update_energy
+            from src.core.nowcast.reaction_diffusion import update_energy
             
             # Simulam evolutia E timp de 'forecast_horizon_steps'
             E_sim = future_c.E
@@ -82,7 +82,7 @@ def run_evaluation_pipeline(data_folder: str, forecast_horizon_steps: int = 2):
             for _ in range(step):
                 # Presupunem no neighbors pentru simplitate in diagnostic offline (vectorial)
                 neighbors = np.array([])
-                E_sim, dE_sim = update_energy(E_sim, neighbors, dE_sim)
+                E_sim, dE_sim, _ = update_energy(E_sim, neighbors, dE_sim)
                 
             # Restituim ca factor de crestere arie
             if future_c.E > 0:

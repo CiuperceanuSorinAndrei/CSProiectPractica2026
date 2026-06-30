@@ -30,8 +30,6 @@ class SessionManager:
         if not session_id:
             session_id = "default"
         self._last_access[session_id] = time.time()
-        if not session_id:
-            session_id = "default"
         if session_id not in self._orchestrators:
             self._orchestrators[session_id] = Orchestrator()
             self._histories[session_id] = FrameHistory()
@@ -47,10 +45,10 @@ class SessionManager:
         bbox: tuple[float, float, float, float], center: tuple[float, float],
         radius_km: float, run_mode: str, time_range: dict, store, polygon=None
     ):
+        """Proceseaza cadru logic (acumulare/re-randare/salt) si mentine starea."""
         self._last_access[session_id] = time.time()
         self._cleanup_old_sessions()
-        
-        """Proceseaza cadru logic (acumulare/re-randare/salt) si mentine starea."""
+
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
 
@@ -67,44 +65,50 @@ class SessionManager:
                 lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon
             )
 
-        is_consecutive = (frame_idx == hist.last_frame_idx + 1)
-        is_same_frame = (frame_idx == hist.last_frame_idx)
-
         if is_new_dataset or frame_idx < hist.last_frame_idx:
-            orch.reset_tracking()
-            hist.reset()
+            def warmup():
+                # Pornim warm-up-ul DUPA ce primul cadru a stabilit geometria (_geom_key); altfel
+                # thread-ul de warm-up vede _geom_key=None, esueaza verificarea si se opreste imediat.
+                paths = [store.path(f) for f in nc_files]
+                orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon)
+
             self._last_dataset_id[session_id] = dataset_id
-
-            for i in range(0, frame_idx):
-                inter = run(i)
-                if inter:
-                    hist.accumulate(inter)
-            result = run(frame_idx)
-            if result is not None:
-                hist.accumulate(result)
-
-            # Pornim warm-up-ul DUPA ce primul cadru a stabilit geometria (_geom_key); altfel
-            # thread-ul de warm-up vede _geom_key=None, esueaza verificarea si se opreste imediat.
-            paths = [store.path(f) for f in nc_files]
-            orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon)
-        elif is_consecutive:
+            result = self._replay_from_start(run, warmup, orch, hist, frame_idx)
+        elif frame_idx == hist.last_frame_idx + 1:  # cadru consecutiv
             result = run(frame_idx)
             if result is None:
                 return None
             hist.accumulate(result)
-        elif is_same_frame:
-            # V24 Fix: Returnam ultimul rezultat in loc sa rulam run(frame_idx) din nou, 
+        elif frame_idx == hist.last_frame_idx:  # acelasi cadru
+            # V24 Fix: Returnam ultimul rezultat in loc sa rulam run(frame_idx) din nou,
             # ceea ce distrugea tracker-ul (viteza 0).
             return hist.last_result
-        else:
-            for i in range(max(0, hist.last_frame_idx + 1), frame_idx):
-                inter = run(i)
-                if inter:
-                    hist.accumulate(inter)
+        else:  # salt inainte peste mai multe cadre
+            self._accumulate_range(run, hist, max(0, hist.last_frame_idx + 1), frame_idx)
             result = run(frame_idx)
             if result is None:
                 return None
             hist.accumulate(result)
 
         hist.last_frame_idx = frame_idx
+        return result
+
+    @staticmethod
+    def _accumulate_range(run, hist, start: int, stop: int) -> None:
+        """Ruleaza si acumuleaza in istoric cadrele intermediare din intervalul [start, stop)."""
+        for i in range(start, stop):
+            inter = run(i)
+            if inter:
+                hist.accumulate(inter)
+
+    @staticmethod
+    def _replay_from_start(run, warmup, orch, hist, frame_idx: int):
+        """Reset complet + re-rulare de la cadrul 0 la frame_idx (dataset nou sau derulare inapoi)."""
+        orch.reset_tracking()
+        hist.reset()
+        SessionManager._accumulate_range(run, hist, 0, frame_idx)
+        result = run(frame_idx)
+        if result is not None:
+            hist.accumulate(result)
+        warmup()
         return result

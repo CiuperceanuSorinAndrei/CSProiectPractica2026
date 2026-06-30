@@ -1,11 +1,13 @@
 """Modul pentru corelarea celulelor intre cadre folosind KD-Tree si Hungarian Algorithm."""
 from __future__ import annotations
 
+from collections import defaultdict
+
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
-from src.core.storm_filter import StormFilter
+from src.core.tracking.storm_filter import StormFilter
 
 
 class Matcher:
@@ -43,12 +45,24 @@ class Matcher:
         max_dist_pixels: int = 15
     ) -> dict[int, int]:
         """Returneaza un dictionar care mapeaza indexul curent la indexul precedent."""
-        num_curr = len(current_cells)
-        num_prev = len(previous_cells)
-        
-        if num_curr == 0 or num_prev == 0:
+        if not current_cells or not previous_cells:
             return {}
 
+        edges = Matcher._build_cost_edges(current_cells, previous_cells, kalman_bank, max_dist_pixels)
+        if not edges:
+            return {}
+
+        components = Matcher._connected_components(edges)
+        return Matcher._assign_within_components(components, edges)
+
+    @staticmethod
+    def _build_cost_edges(
+        current_cells: list[StormCell],
+        previous_cells: list[StormCell],
+        kalman_bank: dict[str, StormFilter],
+        max_dist_pixels: int,
+    ) -> list[tuple[int, int, float]]:
+        """Muchii candidate (i_curent, j_precedent, cost_hibrid) via KD-Tree pre-filtering."""
         # Extragem pozitiile prezise de Kalman pentru celulele precedente
         prev_coords = []
         valid_prev_indices = []
@@ -60,43 +74,35 @@ class Matcher:
                 valid_prev_indices.append(j)
 
         if not prev_coords:
-            return {}
+            return []
 
         prev_coords_arr = np.array(prev_coords)
-        curr_coords_arr = np.array([[c.centroid_y, c.centroid_x] for c in current_cells])
 
-        # KD-Tree pre-filtering
+        # KD-Tree pre-filtering: cautam vecinii pe o raza dubla pentru a include split-uri si erori
         tree = cKDTree(prev_coords_arr)
-        
-        # Cautam toti vecinii pe o raza dubla pentru a include split-uri si erori
         radius_limit = max_dist_pixels * 2.0
-        
+
         edges = []
-        
         for i, c_cell in enumerate(current_cells):
             c_area = c_cell.area_pixels if c_cell.area_pixels > 0 else 1.0
             c_volume = c_cell.volume if c_cell.volume > 0.0 else c_area
             c_y, c_x = c_cell.centroid_y, c_cell.centroid_x
-            
-            # Query the KDTree
+
             indices = tree.query_ball_point([c_y, c_x], r=radius_limit)
-            
             for tree_idx in indices:
                 j = valid_prev_indices[tree_idx]
                 p_cell = previous_cells[j]
-                
+
                 pred_y, pred_x = prev_coords_arr[tree_idx]
-                
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
-                
+
                 adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 0.9, 14.0, 32.0)
                 actual_limit = max(max_dist_pixels, adaptive_radius)
-                
                 if dist > actual_limit:
                     continue
-                    
+
                 dist_norm = dist / actual_limit
-                
+
                 p_area = p_cell.area_pixels if p_cell.area_pixels > 0 else 1.0
                 area_ratio = min(c_area, p_area) / (max(c_area, p_area) + 1e-5)
                 area_penalty = 1.0 - area_ratio
@@ -112,23 +118,25 @@ class Matcher:
                 if hybrid_cost < 500.0:
                     edges.append((i, j, hybrid_cost))
 
-        from collections import defaultdict
-        
-        # Build adjacency list for connected components
+        return edges
+
+    @staticmethod
+    def _connected_components(
+        edges: list[tuple[int, int, float]],
+    ) -> list[tuple[list[int], list[int]]]:
+        """Grupeaza muchiile in componente conexe bipartite (BFS) pentru asignare locala."""
         adj = defaultdict(list)
         for u, v, w in edges:
             adj[f"C_{u}"].append(f"P_{v}")
             adj[f"P_{v}"].append(f"C_{u}")
-            
+
         visited = set()
         components = []
-        
         for u, v, w in edges:
             node = f"C_{u}"
             if node not in visited:
                 comp_C = []
                 comp_P = []
-                # BFS
                 q = [node]
                 visited.add(node)
                 while q:
@@ -142,10 +150,18 @@ class Matcher:
                             visited.add(neighbor)
                             q.append(neighbor)
                 components.append((comp_C, comp_P))
-                
+
+        return components
+
+    @staticmethod
+    def _assign_within_components(
+        components: list[tuple[list[int], list[int]]],
+        edges: list[tuple[int, int, float]],
+    ) -> dict[int, int]:
+        """Hungarian (linear_sum_assignment) pe fiecare componenta -> {idx_curent: idx_precedent}."""
         matches = {}
         edge_costs = {(u, v): w for u, v, w in edges}
-        
+
         for comp_C, comp_P in components:
             # Build sub-matrix for this component
             sub_cost = np.full((len(comp_C), len(comp_P)), 1000.0)
@@ -153,7 +169,7 @@ class Matcher:
                 for c_idx, v in enumerate(comp_P):
                     if (u, v) in edge_costs:
                         sub_cost[r_idx, c_idx] = edge_costs[(u, v)]
-                        
+
             r_ind, c_ind = linear_sum_assignment(sub_cost)
             for r, c in zip(r_ind, c_ind):
                 if sub_cost[r, c] < 500.0:

@@ -35,15 +35,25 @@ class StormMapPlotter:
             (fig, ax, im) - figura, axa cartopy si imaginea pcolormesh
         """
         lon_min, lon_max, lat_min, lat_max = extent
-        import matplotlib.colors as mcolors
-        
+
         # Fundal intunecat (Cinematic Dark Mode)
         fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={"projection": ccrs.PlateCarree()})
         fig.patch.set_facecolor('#111315') # Culoare margini figura
         ax.set_facecolor('#111315')
-        
         ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-        
+
+        StormMapPlotter._setup_basemap(ax)
+        im = StormMapPlotter._draw_rain_field(ax, lon_grid, lat_grid, rain_rate_masked, vmin, vmax)
+        StormMapPlotter._draw_roi(ax, roi_center, roi_radius_km, polygon)
+
+        if title:
+            ax.set_title(title, fontsize=11, fontweight="bold", color="#f8f9fa")
+
+        return fig, ax, im
+
+    @staticmethod
+    def _setup_basemap(ax) -> None:
+        """Adauga straturile geografice de fundal (pamant/apa, granite, coastline, gridlines)."""
         # Diferentiere pamant si apa folosind rezolutia 50m (care se descarca foarte rapid)
         land_50m = cfeature.NaturalEarthFeature('physical', 'land', '50m', edgecolor='none', facecolor='#1a1c20')
         ocean_50m = cfeature.NaturalEarthFeature('physical', 'ocean', '50m', edgecolor='none', facecolor='#111315')
@@ -51,10 +61,15 @@ class StormMapPlotter:
         ax.add_feature(ocean_50m, zorder=0)
         ax.add_feature(cfeature.BORDERS, linestyle="-", linewidth=1.0, edgecolor="#343a40", zorder=1)
         ax.add_feature(cfeature.COASTLINE, linestyle="-", linewidth=1.2, edgecolor="#495057", zorder=1)
-        
+
         gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="#495057", alpha=0.5, zorder=1)
         gl.xlabel_style = {'color': '#adb5bd', 'size': 9}
         gl.ylabel_style = {'color': '#adb5bd', 'size': 9}
+
+    @staticmethod
+    def _draw_rain_field(ax, lon_grid, lat_grid, rain_rate_masked, vmin: float, vmax: float):
+        """Deseneaza campul de precipitatii (paleta radar) + colorbar. Returneaza imaginea contourf."""
+        import matplotlib.colors as mcolors
 
         # Paleta de culori specifica pentru radar meteo
         radar_colors = [
@@ -77,7 +92,11 @@ class StormMapPlotter:
         cb.set_label("Intensitate ploaie (mm/h)", color="#adb5bd")
         cb.ax.yaxis.set_tick_params(color="#adb5bd")
         plt.setp(plt.getp(cb.ax.axes, 'yticklabels'), color="#adb5bd")
+        return im
 
+    @staticmethod
+    def _draw_roi(ax, roi_center, roi_radius_km, polygon) -> None:
+        """Evidentiaza regiunea de interes: conturul poligonului (lac) sau cercul de raza (oras)."""
         if polygon is not None:
             # Daca avem poligon, adaugam un fundal alb transparent si bordura mai groasa pentru a face lacurile mici mai vizibile
             ax.add_geometries(
@@ -95,11 +114,6 @@ class StormMapPlotter:
                 [geom], crs=ccrs.PlateCarree(),
                 facecolor=(1.0, 1.0, 1.0, 0.15), edgecolor='white', linewidth=2.5, linestyle='--', zorder=5,
             )
-
-        if title:
-            ax.set_title(title, fontsize=11, fontweight="bold", color="#f8f9fa")
-
-        return fig, ax, im
 
     @staticmethod
     def draw_overlays(ax, tracked_cells: list[dict], lon_grid: np.ndarray, lat_grid: np.ndarray) -> None:

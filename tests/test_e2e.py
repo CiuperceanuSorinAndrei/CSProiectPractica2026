@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
-from src.core.frame_processor import FrameProcessor
-from src.core.storm_tracker import StormTracker
+from src.core.pipeline.frame_processor import FrameProcessor
+from src.core.tracking.storm_tracker import StormTracker
 from src.core.domain import StormCell
 from src.io.frame_preprocessor import FramePrep, FrameGeometry
 

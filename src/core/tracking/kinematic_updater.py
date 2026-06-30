@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any
 import numpy as np
 
-from src.core.storm_filter import StormFilter
+from src.core.tracking.storm_filter import StormFilter
 from src.core.domain import StormCell
 
 class KinematicUpdater:
