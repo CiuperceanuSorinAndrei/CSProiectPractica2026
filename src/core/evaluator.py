@@ -12,7 +12,7 @@ class Evaluator:
     def calculate_global_metrics(
         rain_rate: np.ndarray,
         roi_mask: np.ndarray,
-        predictions_queue: list[dict],
+        predictions_queue: list[tuple[dict, dict]],
         horizons: list[tuple[int, str]]
     ) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
         """Calculeaza CSI, FAR, POD si FSS pentru orizonturile specificate."""
@@ -21,7 +21,7 @@ class Evaluator:
 
         for steps_back, name in horizons:
             if len(predictions_queue) >= steps_back:
-                past_pred_sparse = predictions_queue[-steps_back].get(name)
+                past_pred_sparse = predictions_queue[-steps_back][0].get(name)
                 if past_pred_sparse is not None:
                     past_pred = past_pred_sparse.toarray()
                     if past_pred.shape == rain_rate.shape:

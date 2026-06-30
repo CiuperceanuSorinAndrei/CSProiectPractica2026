@@ -29,6 +29,8 @@ class FrameResult:
     global_far: dict[str, float]
     global_pod: dict[str, float]
     global_fss: dict[str, float]
+    raw_tracked_cells: list[Any] = None
+    raw_predicted_cells: dict[str, list[Any]] = None
 
 class FrameProcessor:
     """Serviciu de domeniu stateless. Primeste input-uri decodate si intoarce FrameResult."""
@@ -53,11 +55,11 @@ class FrameProcessor:
             rain_rate, roi_mask, predictions_queue, horizons
         )
 
-        sparse_preds, float_preds = AdvectionEngine.extrapolate(
+        sparse_preds, float_preds, predicted_cells_dict = AdvectionEngine.extrapolate(
             rain_rate, flow, tracked_cells, horizons
         )
 
-        predictions_queue.append(sparse_preds)
+        predictions_queue.append((sparse_preds, predicted_cells_dict))
         if len(predictions_queue) > 25:
             predictions_queue.pop(0)
 
@@ -75,6 +77,8 @@ class FrameProcessor:
         
         return FrameResult(
             tracked_cells=tracked_cells_dicts,
+            raw_tracked_cells=tracked_cells,
+            raw_predicted_cells=predicted_cells_dict,
             rain_rate=rain_rate,
             rain_rate_masked=rain_rate_masked,
             lon_grid=geom.lon_grid,

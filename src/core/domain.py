@@ -3,6 +3,16 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 import numpy as np
 
+@dataclass(frozen=True)
+class CellDiagnostics:
+    """Telemetrie fizica imuabila generata de Reaction-Diffusion engine."""
+    energy_before: float = 0.0
+    energy_after: float = 0.0
+    reaction_gain: float = 0.0
+    diffusion_delta: float = 0.0
+    relative_diffusion: float = 0.0
+    diffusion_fraction: float = 0.0
+
 @dataclass
 class StormCell:
     """Modeleaza o celula de furtuna (Domain Object) inlocuind 'Primitive Obsession' (dict)."""
@@ -55,7 +65,8 @@ class StormCell:
     size_error_pixels: int = 0
     size_error_percent: float = 0.0
     
-    # Istoric
+    # Istoric & Telemetrie
+    diagnostics: CellDiagnostics | None = field(default=None, repr=False)
     centroid_history: list[tuple[float, float]] = field(default_factory=list)
     area_history: list[int] = field(default_factory=list)
     cell_history: list[dict[str, Any]] = field(default_factory=list)
@@ -77,6 +88,9 @@ class StormCell:
                 # Explicit list copy for histories to prevent mutation side-effects
                 val = getattr(self, name)
                 kwargs[name] = list(val) if val is not None else []
+            elif name == 'diagnostics':
+                # Immutables can be passed by reference
+                kwargs[name] = getattr(self, name)
             else:
                 kwargs[name] = getattr(self, name)
         return StormCell(**kwargs)

@@ -141,6 +141,9 @@ class ReportBuilder:
                 html.Td(f"{vol_pred_sum:.0f}"), html.Td(f"{delta_pct:+.1f}%")
             ]))
 
+        # Phase 6: Run the FAR Inspector at the very end of the simulation
+        hist.generate_far_report()
+
         return html.Div([
             dbc.Alert(
                 [

@@ -68,8 +68,8 @@ class Matcher:
         # KD-Tree pre-filtering
         tree = cKDTree(prev_coords_arr)
         
-        # Cautam toti vecinii pe o raza dubla pentru a include split-uri si erori
-        radius_limit = max_dist_pixels * 2.0
+        # Cautam toti vecinii pe o raza tripla pentru a include split-uri, deformari si celule foarte rapide
+        radius_limit = max_dist_pixels * 3.0
         
         edges = []
         
@@ -89,8 +89,8 @@ class Matcher:
                 
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
                 
-                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 0.9, 14.0, 32.0)
-                actual_limit = max(max_dist_pixels, adaptive_radius)
+                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 1.5, 15.0, 45.0)
+                actual_limit = max(max_dist_pixels * 2.5, adaptive_radius)
                 
                 if dist > actual_limit:
                     continue
