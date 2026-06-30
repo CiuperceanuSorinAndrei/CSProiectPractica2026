@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
-from src.core.forecast_metrics import ForecastMetrics
+from src.core.metrics.forecast_metrics import ForecastMetrics
 
 
 class Evaluator:

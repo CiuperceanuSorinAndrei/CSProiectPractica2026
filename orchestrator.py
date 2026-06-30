@@ -8,9 +8,9 @@ si de a garanta protectia UI-ului prin lacatul de executie.
 from __future__ import annotations
 import threading
 
-from src.core.storm_tracker import StormTracker
-from src.core.cache_manager import CacheManager
-from src.core.frame_processor import FrameProcessor, FrameResult
+from src.core.tracking.storm_tracker import StormTracker
+from src.core.pipeline.cache_manager import CacheManager
+from src.core.pipeline.frame_processor import FrameProcessor, FrameResult
 from config import MAX_TRACKING_DISTANCE_PX
 
 class ServerBusy(Exception):

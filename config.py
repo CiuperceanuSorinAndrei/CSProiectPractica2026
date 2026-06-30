@@ -13,6 +13,9 @@ os.makedirs(DATA_GEO_DIR, exist_ok=True)
 # --- SETĂRI FTP H-SAF ---
 FTP_HOST = "ftphsaf.meteoam.it"
 FTP_BASE_FOLDER = "h60/h60_cur_mon_data"
+# Sablon strftime pentru numele fisierelor (folosit la generarea numelor de descarcat
+# si la citirea datei din fisierele locale). %Y an, %m luna, %d zi, %H ora, %M minut.
+FTP_FILE_FORMAT = "h60_%Y%m%d_%H%M_fdk.nc.gz"
 
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")

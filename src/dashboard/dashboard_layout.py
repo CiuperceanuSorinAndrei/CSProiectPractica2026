@@ -37,6 +37,7 @@ class DashboardLayout:
                 html.H4("Estimarea volumului de precipitații din produse satelitare",
                         className="text-info fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 html.Hr(),
+                *self._server_config_section(),
                 *self._run_mode_section(),
                 *self._roi_section(),
                 *self._ingestion_section(),
@@ -46,6 +47,48 @@ class DashboardLayout:
             ],
             className="bg-dark text-light p-4 shadow-sm border-end border-secondary app-sidebar",
         )
+
+    @staticmethod
+    def _server_config_section() -> list:
+        """Campuri editabile pentru server/foldere/credentiale/format, deasupra tuturor.
+        Pre-completate din setarile persistate (server_settings.json) sau implicitele din config."""
+        from src.io.server_settings import ServerSettings
+        s = ServerSettings.load()
+        inp = {"className": "mb-2 bg-dark text-light border-secondary", "size": "sm", "debounce": True}
+        return [
+            # Buton-antet care arata/ascunde tot blocul de configurare (pagina mai putin aglomerata).
+            dbc.Button(
+                "▸ Configurare Server",
+                id="toggle-server-config", color="link", size="sm",
+                className="fw-bold text-light text-decoration-none p-0 mb-2 shadow-none",
+            ),
+            dbc.Collapse(
+                [
+                    dbc.Label("Host FTP", className="small text-light mb-1"),
+                    dbc.Input(id="srv-host", type="text", value=s.host, **inp),
+                    dbc.Label("Director server (sursă)", className="small text-light mb-1"),
+                    dbc.Input(id="srv-remote-dir", type="text", value=s.remote_dir, **inp),
+                    dbc.Label("Director local (salvare)", className="small text-light mb-1"),
+                    dbc.Input(id="srv-local-dir", type="text", value=s.local_dir, **inp),
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Utilizator", className="small text-light mb-1"),
+                            dbc.Input(id="srv-user", type="text", value="", **inp),
+                        ]),
+                        dbc.Col([
+                            dbc.Label("Parolă", className="small text-light mb-1"),
+                            dbc.Input(id="srv-pass", type="password", value="", **inp),
+                        ]),
+                    ]),
+                    dbc.Label("Format fișier (strftime)", className="small text-light mb-1"),
+                    dbc.Input(id="srv-format", type="text", value=s.file_format, **inp),
+                    dbc.Label("Interval între cadre (min)", className="small text-light mb-1"),
+                    dbc.Input(id="time-delta", type="number", value=s.time_delta, min=1, step=1, **inp),
+                ],
+                id="server-config-collapse", is_open=False,
+            ),
+            html.Hr(),
+        ]
 
     @staticmethod
     def _run_mode_section() -> list:

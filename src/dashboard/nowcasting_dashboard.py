@@ -11,10 +11,11 @@ from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
 from src.io.cloud_data_service import CloudDataService
+from src.io.server_settings import ServerSettings
 from src.ui_helpers.plotting import StormMapPlotter
 from config import PREDEFINED_LOCATIONS, BASE_DIR
 
-from src.dashboard.constants import DATA_DIR, MANUAL_LOCATION, DEFAULT_TIME_RANGE
+from src.dashboard.constants import MANUAL_LOCATION, DEFAULT_TIME_RANGE
 from src.dashboard.frame_store import FrameStore
 from src.dashboard.dashboard_layout import DashboardLayout
 from src.dashboard.session_manager import SessionManager
@@ -25,8 +26,9 @@ class NowcastingDashboard:
     """Aplicatia Dash simplificata."""
 
     def __init__(self):
-        self._store = FrameStore(DATA_DIR)
-        self._data_service = CloudDataService()
+        self._settings = ServerSettings.load()
+        self._store = FrameStore(self._settings.local_dir, self._settings.file_format)
+        self._data_service = CloudDataService(self._settings)
         self._session_manager = SessionManager()
 
         self.app = dash.Dash(
@@ -60,6 +62,12 @@ class NowcastingDashboard:
         return {"display": "block"}, {"display": "block"}
 
     def _register_callbacks(self) -> None:
+        self._register_ui_callbacks()
+        self._register_data_callbacks()
+        self._register_render_callbacks()
+
+    def _register_ui_callbacks(self) -> None:
+        """Toggle-uri pur de prezentare: vizibilitate sectiuni, play/pauza, mod live, config server."""
         app = self.app
 
         app.callback(
@@ -79,17 +87,6 @@ class NowcastingDashboard:
         )(self._toggle_play)
 
         app.callback(
-            Output("frame-slider", "value"),
-            Output("is-processing", "data", allow_duplicate=True),
-            Output("animation-interval", "disabled", allow_duplicate=True),
-            Input("animation-interval", "n_intervals"),
-            State("is-processing", "data"),
-            State("frame-slider", "value"),
-            State("frame-slider", "max"),
-            prevent_initial_call=True,
-        )(self._auto_advance_frame)
-
-        app.callback(
             Output("live-polling-interval", "disabled"),
             Output("btn-play", "disabled"),
             Output("btn-reset", "disabled"),
@@ -103,20 +100,39 @@ class NowcastingDashboard:
         )(self._toggle_live_mode)
 
         app.callback(
+            Output("historic-controls-container", "style"),
+            Output("playback-controls-container", "style"),
+            Input("run-mode-select", "value")
+        )(self._toggle_ui_elements)
+
+        app.callback(
+            Output("server-config-collapse", "is_open"),
+            Output("toggle-server-config", "children"),
+            Input("toggle-server-config", "n_clicks"),
+            State("server-config-collapse", "is_open"),
+            prevent_initial_call=True,
+        )(self._toggle_server_config)
+
+    def _register_data_callbacks(self) -> None:
+        """Achizitie de date: polling LIVE de la FTP si descarcare istorica pe interval."""
+        app = self.app
+
+        app.callback(
             Output("frame-slider", "max", allow_duplicate=True),
             Output("frame-slider", "value", allow_duplicate=True),
             Input("live-polling-interval", "n_intervals"),
             Input("run-mode-select", "value"),
             State("frame-slider", "value"),
             State("frame-slider", "max"),
+            State("srv-host", "value"),
+            State("srv-remote-dir", "value"),
+            State("srv-local-dir", "value"),
+            State("srv-user", "value"),
+            State("srv-pass", "value"),
+            State("srv-format", "value"),
+            State("time-delta", "value"),
             prevent_initial_call=True,
         )(self._poll_live_data)
-
-        app.callback(
-            Output("historic-controls-container", "style"),
-            Output("playback-controls-container", "style"),
-            Input("run-mode-select", "value")
-        )(self._toggle_ui_elements)
 
         app.callback(
             Output("download-status", "children"),
@@ -128,8 +144,30 @@ class NowcastingDashboard:
             State("end-date", "date"),
             State("start-hour", "value"),
             State("end-hour", "value"),
+            State("srv-host", "value"),
+            State("srv-remote-dir", "value"),
+            State("srv-local-dir", "value"),
+            State("srv-user", "value"),
+            State("srv-pass", "value"),
+            State("srv-format", "value"),
+            State("time-delta", "value"),
             prevent_initial_call=True,
         )(self._download_historic)
+
+    def _register_render_callbacks(self) -> None:
+        """Playback si randare: auto-advance, callback-ul principal de harta, reset, status warm-up."""
+        app = self.app
+
+        app.callback(
+            Output("frame-slider", "value"),
+            Output("is-processing", "data", allow_duplicate=True),
+            Output("animation-interval", "disabled", allow_duplicate=True),
+            Input("animation-interval", "n_intervals"),
+            State("is-processing", "data"),
+            State("frame-slider", "value"),
+            State("frame-slider", "max"),
+            prevent_initial_call=True,
+        )(self._auto_advance_frame)
 
         app.callback(
             Output("map-image", "src"),
@@ -204,9 +242,11 @@ class NowcastingDashboard:
         is_live = (mode == "live")
         return not is_live, is_live, is_live, False, is_live, is_live, is_live, is_live, is_live
 
-    def _poll_live_data(self, n_int, mode, current_val, current_max):
+    def _poll_live_data(self, n_int, mode, current_val, current_max,
+                        host, remote_dir, local_dir, username, password, file_format, time_delta):
         if mode != "live":
             raise PreventUpdate
+        self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
         self._data_service.fetch_latest()
         files = self._store.filtered(time_range=None, run_mode="live")
         if not files:
@@ -238,7 +278,26 @@ class NowcastingDashboard:
             return ""
         return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
 
-    def _download_historic(self, n, start_d, end_d, start_h, end_h):
+    @staticmethod
+    def _toggle_server_config(n, is_open):
+        """Arata/ascunde blocul de configurare server + actualizeaza chevronul butonului."""
+        new_open = not is_open
+        return new_open, ("▾ Configurare Server" if new_open else "▸ Configurare Server")
+
+    def _apply_settings(self, host, remote_dir, local_dir, username, password, file_format, time_delta) -> None:
+        """Aplica setarile de server din UI: reconfigureaza serviciul de date + store-ul si
+        persista pe disc campurile non-credentiale (NU user/parola). No-op daca nimic nu s-a schimbat."""
+        s = ServerSettings.from_inputs(host, remote_dir, local_dir, file_format, time_delta, username, password)
+        if s == self._settings:
+            return
+        s.save()  # persista host / directoare / format / interval (NU user/parola)
+        self._settings = s
+        self._data_service.reconfigure(s)
+        self._store = FrameStore(s.local_dir, s.file_format)
+
+    def _download_historic(self, n, start_d, end_d, start_h, end_h,
+                           host, remote_dir, local_dir, username, password, file_format, time_delta):
+        self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
         if not start_d or not end_d:
             return "Selectează datele!", dash.no_update, dash.no_update, dash.no_update
         if start_h is None or end_h is None:
@@ -268,11 +327,6 @@ class NowcastingDashboard:
     def _update_dashboard(
         self, frame_idx, loc_choice, loc_type, res_select, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id
     ):
-        import numpy as np
-        from dash.exceptions import PreventUpdate
-        from src.geo.reservoir_loader import ReservoirLoader
-        from src.dashboard.constants import MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT, ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT
-        
         ctx = dash.callback_context
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
@@ -281,6 +335,51 @@ class NowcastingDashboard:
             raise PreventUpdate
         if triggered_id == "reservoir-select" and loc_type != "reservoir":
             raise PreventUpdate
+
+        zoom, radius, warnings = self._validate_zoom_radius(map_zoom, radius_km)
+
+        nc_files = self._store.filtered(tr_data, run_mode)
+        if not nc_files:
+            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+                    "Fără date", None, None, False, warnings, zoom, radius, "")
+
+        frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
+        label = self._store.label(nc_files[frame_idx])
+
+        center, polygon, zoom = self._resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom)
+        bbox = self._compute_bbox(center, zoom)
+
+        from orchestrator import ServerBusy
+        try:
+            result = self._session_manager.process_to_frame(
+                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self._store, polygon=polygon
+            )
+        except ServerBusy:
+            raise PreventUpdate
+
+        if result is None:
+            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
+                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius, "")
+
+        title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
+        src = self._render_map_png(result, bbox, center, radius, polygon, title)
+
+        # Reports
+        diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
+        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self._session_manager)
+        lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
+        final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self._session_manager)
+
+        return (src, hist_vol, curr_vol, pred_vol, max_rain,
+                m_30m, m_1h, m_2h, m_tot, tracked, in_roi,
+                lbl_frame, final_report, diagnostics, False, warnings, zoom, radius, "")
+
+    def _validate_zoom_radius(self, map_zoom, radius_km):
+        """Clamp pentru zoom (arie harta) si raza ROI; genereaza avertismente UI pentru valori invalide."""
+        from src.dashboard.constants import (
+            MAP_ZOOM_MIN, MAP_ZOOM_MAX, MAP_ZOOM_DEFAULT,
+            ROI_RADIUS_MIN, ROI_RADIUS_MAX, ROI_RADIUS_DEFAULT,
+        )
 
         raw_zoom, raw_radius = map_zoom, radius_km
         zoom = min(max(map_zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX) if map_zoom is not None else MAP_ZOOM_DEFAULT
@@ -297,14 +396,13 @@ class NowcastingDashboard:
         elif raw_radius > ROI_RADIUS_MAX or raw_radius < ROI_RADIUS_MIN:
             warnings.append(dbc.Alert(f"Raza introdusă ({raw_radius} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
 
-        nc_files = self._store.filtered(tr_data, run_mode)
-        if not nc_files:
-            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
-                    "Fără date", None, None, False, warnings, zoom, radius, "")
+        return zoom, radius, warnings
 
-        frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
-        label = FrameStore.label(nc_files[frame_idx])
-        
+    @staticmethod
+    def _resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom):
+        """Determina centrul (lat, lon), poligonul ROI si zoom-ul ajustat in functie de tipul de locatie."""
+        from src.geo.reservoir_loader import ReservoirLoader
+
         polygon = None
         if loc_type == "reservoir":
             reservoirs = ReservoirLoader.get_all_reservoirs()
@@ -322,28 +420,25 @@ class NowcastingDashboard:
             else:
                 cfg = PREDEFINED_LOCATIONS[loc_choice]
                 center = (float(cfg["lat"]), float(cfg["lon"]))
-            
+
+        return center, polygon, zoom
+
+    @staticmethod
+    def _compute_bbox(center, zoom):
+        """Bounding box geografic (lon_min, lon_max, lat_min, lat_max) din centru + arie (km)."""
+        import numpy as np
         center_lat, center_lon = center
         delta_lat = zoom / 111.0
         delta_lon = zoom / (111.0 * np.cos(np.radians(center_lat)))
-        bbox = (center_lon - delta_lon, center_lon + delta_lon, center_lat - delta_lat, center_lat + delta_lat)
+        return (center_lon - delta_lon, center_lon + delta_lon, center_lat - delta_lat, center_lat + delta_lat)
 
-        from orchestrator import ServerBusy
-        try:
-            result = self._session_manager.process_to_frame(
-                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self._store, polygon=polygon
-            )
-        except ServerBusy:
-            from dash.exceptions import PreventUpdate
-            raise PreventUpdate
-        
-        if result is None:
-            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
-                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius, "")
+    @staticmethod
+    def _render_map_png(result, bbox, center, radius, polygon, title):
+        """Randeaza harta de precipitatii + overlay-uri de tracking intr-un PNG base64 (data URI)."""
+        import io
+        import base64
+        import matplotlib.pyplot as plt
 
-        title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
-        
-        # Plot map
         fig, ax, _ = StormMapPlotter.create_figure(
             lon_grid=result.lon_grid,
             lat_grid=result.lat_grid,
@@ -360,22 +455,9 @@ class NowcastingDashboard:
             lon_grid=result.lon_grid,
             lat_grid=result.lat_grid
         )
-        import io
-        import base64
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight", dpi=100, facecolor='#212529')
         buf.seek(0)
         encoded = base64.b64encode(buf.read()).decode("ascii")
-        src = f"data:image/png;base64,{encoded}"
-        import matplotlib.pyplot as plt
         plt.close(fig)
-
-        # Reports
-        diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self._session_manager)
-        lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
-        final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self._session_manager)
-
-        return (src, hist_vol, curr_vol, pred_vol, max_rain,
-                m_30m, m_1h, m_2h, m_tot, tracked, in_roi,
-                lbl_frame, final_report, diagnostics, False, warnings, zoom, radius, "")
+        return f"data:image/png;base64,{encoded}"
