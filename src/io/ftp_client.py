@@ -38,10 +38,20 @@ class FtpClient:
 
     def connect(self):
         print(f"Conectare la FTP {self._host}...")
-        self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
-        self._current_ftp.login(user=self._username, passwd=self._password)
+        try:
+            self._current_ftp = ftplib.FTP_TLS(self._host, timeout=self._timeout)
+            self._current_ftp.login(user=self._username, passwd=self._password)
+            self._current_ftp.prot_p()  # Securizeaza conexiunea de date
+            print("Conectare securizata (FTPS) reusita")
+        except (ftplib.error_perm, ftplib.error_temp, EOFError, OSError) as e:
+            print(f"[Avertisment] FTPS nesuportat de server ({e}). Fallback la FTP nesecurizat...")
+            self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
+            self._current_ftp.login(user=self._username, passwd=self._password)
+            self._current_ftp.cwd(self._base_dir)
+            print("Conectare fallback (FTP plain) reusita")
+            return
+            
         self._current_ftp.cwd(self._base_dir)
-        print("Conectare reusita")
 
     def disconnect(self):
         print(f"Deconectare de la FTP {self._host}...")
