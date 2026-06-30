@@ -65,8 +65,7 @@ def run_evaluation_pipeline(data_folder: str, forecast_horizon_steps: int = 2):
         for c in tracker._previous_cells:
             if not c.is_tracked:
                 continue
-            import copy
-            future_c = copy.deepcopy(c)
+            future_c = c.clone()
             # Aplicam 1 salt
             step = forecast_horizon_steps
             gamma = 0.8

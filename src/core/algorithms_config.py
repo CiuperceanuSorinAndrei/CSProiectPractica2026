@@ -28,4 +28,8 @@ class AlgorithmsConfig:
     MATCHER_VOL_WEIGHT: float = 0.5
     MATCHER_IOU_WEIGHT: float = 1.5
 
+    # --- Diagnostics & Inspector ---
+    INSPECTOR_BASE_RADIUS: float = 15.0
+    INSPECTOR_MAX_RADIUS_MULT: float = 2.0
+
 config = AlgorithmsConfig()

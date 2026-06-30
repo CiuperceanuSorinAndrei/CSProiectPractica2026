@@ -22,7 +22,12 @@ def reaction(E: float, dE: float, alpha_g: float = 1.5, alpha_d: float = 1.8, be
     
     if dE_frac >= 0:
         # Growth regime: creștere proporțională cu derivata (scale invariant)
-        return base_inertia + alpha_g * dE_frac
+        R = base_inertia + alpha_g * dE_frac
+        
+        # Hard-cap asimptotic: cu cat E este mai mare, cu atat cresterea maxima se plafoneaza la 1.0.
+        # Aceasta previne explozia la infinit a super-celulelor (Ghost Heating).
+        max_R = 1.0 + 2.0 / (abs(E) + 1.0)
+        return min(R, max_R)
         
     # Decay regime: colaps exponențial
     return base_inertia * np.exp(-alpha_d * abs(dE_frac))

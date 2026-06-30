@@ -25,9 +25,8 @@ def test_preprocess_nan_filtering():
         
         prep = preprocess("dummy.nc", MockGeometry(), (0, 0, 0, 0))
         assert prep is not None
-        assert not np.isnan(prep.rain_rate).any()
-        assert prep.rain_rate[2, 2] == 0.0 # NaN -> 0.0
-        assert prep.rain_rate[0, 0] == 0.0 # Negative -> 0.0
+        assert np.isnan(prep.rain_rate[2, 2]), "NaN values should be preserved as missing data"
+        assert prep.rain_rate[0, 0] == 0.0, "Negative values should be zeroed"
         
     finally:
         frame_preprocessor._read_rain_window = original_read

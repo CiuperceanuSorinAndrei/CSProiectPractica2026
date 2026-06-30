@@ -1,4 +1,5 @@
 import os
+import threading
 import shapefile
 from shapely.geometry import shape
 from shapely.ops import transform
@@ -6,6 +7,7 @@ from pyproj import Transformer
 
 class ReservoirLoader:
     _cache = None
+    _lock = threading.Lock()
 
     @staticmethod
     def get_all_reservoirs(shapefile_path="data/geo/reservoirs/LacuriAcumulare.shp") -> dict:
@@ -15,9 +17,13 @@ class ReservoirLoader:
         """
         if ReservoirLoader._cache is not None:
             return ReservoirLoader._cache
+            
+        with ReservoirLoader._lock:
+            if ReservoirLoader._cache is not None:
+                return ReservoirLoader._cache
 
-        if not os.path.exists(shapefile_path):
-            return {}
+            if not os.path.exists(shapefile_path):
+                return {}
 
         reservoirs = {}
         try:

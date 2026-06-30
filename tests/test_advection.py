@@ -8,7 +8,7 @@ def test_advection_extrapolate_nan_handling():
     rain_rate[5, 5] = np.nan
     flow = np.zeros((10, 10, 2))
     
-    sparse_preds, float_preds = AdvectionEngine.extrapolate(
+    sparse_preds, float_preds, predicted_cells_dict = AdvectionEngine.extrapolate(
         rain_rate, flow, tracked_cells=[], horizons=[(1, "15m")]
     )
     

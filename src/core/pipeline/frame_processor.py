@@ -45,9 +45,8 @@ class FrameProcessor:
         rain_rate = prep.rain_rate
         roi_mask = geom.roi_mask
 
-        import copy
-        # Copii superficiale pentru a nu muta celulele memoizate
-        cells_for_tracking = [copy.copy(c) for c in prep.filtered_cells]
+        # Copii superficiale cu istoric profund pentru a nu muta celulele memoizate
+        cells_for_tracking = [c.clone() for c in prep.filtered_cells]
         tracked_cells, flow = tracker.track(cells_for_tracking, rain_rate)
 
         horizons = [(2, "30m"), (4, "1h"), (8, "2h")]
@@ -64,7 +63,8 @@ class FrameProcessor:
             predictions_queue.pop(0)
 
         roi_volume_m3, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
-            rain_rate, float_preds, roi_mask, geom.pixel_area_km2, horizons
+            rain_rate, float_preds, roi_mask, geom.pixel_area_km2, horizons,
+            getattr(geom, 'roi_mask_fractional', None)
         )
 
         valid_errors = [getattr(c, "prediction_error_pixels", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]

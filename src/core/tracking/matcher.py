@@ -1,7 +1,7 @@
 """Modul pentru corelarea celulelor intre cadre folosind KD-Tree si Hungarian Algorithm."""
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -18,19 +18,33 @@ class Matcher:
         if coords_a is None or coords_b is None or len(coords_a) == 0 or len(coords_b) == 0:
             return 0.0
             
-        # V28 Optimizare Memorie & CPU: Fara Python Sets (O(N) gc bottleneck).
-        # Convertim coordonatele Nx2 intr-un format structurat pentru np.intersect1d.
         arr_a = np.ascontiguousarray(coords_a)
         arr_b = np.ascontiguousarray(coords_b)
         
-        # Tip de date void pentru a privi un rând întreg (y, x) ca un singur element.
-        void_dt = np.dtype((np.void, arr_a.dtype.itemsize * arr_a.shape[1]))
+        # Bounding box check for fast rejection (O(1))
+        min_a = arr_a.min(axis=0)
+        max_a = arr_a.max(axis=0)
+        min_b = arr_b.min(axis=0)
+        max_b = arr_b.max(axis=0)
         
-        view_a = arr_a.view(void_dt).ravel()
-        view_b = arr_b.view(void_dt).ravel()
+        if (max_a[0] < min_b[0] or min_a[0] > max_b[0] or
+            max_a[1] < min_b[1] or min_a[1] > max_b[1]):
+            return 0.0
+            
+        # Overlap region extraction
+        min_y = min(min_a[0], min_b[0])
+        max_y = max(max_a[0], max_b[0])
+        min_x = min(min_a[1], min_b[1])
+        max_x = max(max_a[1], max_b[1])
         
-        # assume_unique=True este extrem de rapid, fiindcă pixelii unei celule sunt unici prin definitie
-        intersection = np.intersect1d(view_a, view_b, assume_unique=True).size
+        shape = (int(max_y - min_y + 1), int(max_x - min_x + 1))
+        mask_a = np.zeros(shape, dtype=bool)
+        mask_b = np.zeros(shape, dtype=bool)
+        
+        mask_a[arr_a[:, 0] - min_y, arr_a[:, 1] - min_x] = True
+        mask_b[arr_b[:, 0] - min_y, arr_b[:, 1] - min_x] = True
+        
+        intersection = np.count_nonzero(mask_a & mask_b)
         if intersection == 0:
             return 0.0
             
@@ -80,15 +94,10 @@ class Matcher:
 
         # KD-Tree pre-filtering: cautam vecinii pe o raza dubla pentru a include split-uri si erori
         tree = cKDTree(prev_coords_arr)
-<<<<<<< HEAD:src/core/matcher.py
-        
+
         # Cautam toti vecinii pe o raza tripla pentru a include split-uri, deformari si celule foarte rapide
         radius_limit = max_dist_pixels * 3.0
         
-=======
-        radius_limit = max_dist_pixels * 2.0
-
->>>>>>> origin/refactoring:src/core/tracking/matcher.py
         edges = []
         for i, c_cell in enumerate(current_cells):
             c_area = c_cell.area_pixels if c_cell.area_pixels > 0 else 1.0
@@ -102,16 +111,10 @@ class Matcher:
 
                 pred_y, pred_x = prev_coords_arr[tree_idx]
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
-<<<<<<< HEAD:src/core/matcher.py
-                
+
                 adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 1.5, 15.0, 45.0)
                 actual_limit = max(max_dist_pixels * 2.5, adaptive_radius)
                 
-=======
-
-                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 0.9, 14.0, 32.0)
-                actual_limit = max(max_dist_pixels, adaptive_radius)
->>>>>>> origin/refactoring:src/core/tracking/matcher.py
                 if dist > actual_limit:
                     continue
 
@@ -151,10 +154,10 @@ class Matcher:
             if node not in visited:
                 comp_C = []
                 comp_P = []
-                q = [node]
+                q = deque([node])
                 visited.add(node)
                 while q:
-                    curr = q.pop(0)
+                    curr = q.popleft()
                     if curr.startswith("C_"):
                         comp_C.append(int(curr[2:]))
                     else:

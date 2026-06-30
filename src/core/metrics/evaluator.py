@@ -40,27 +40,23 @@ class Evaluator:
         float_preds: dict[int, np.ndarray],
         roi_mask: np.ndarray,
         pixel_area_km2: np.ndarray,
-        horizons: list[tuple[int, str]]
-    ) -> tuple[float, dict[str, float]]:
-        """Calculeaza volumul curent in ROI si volumul acumulat pe orizonturi.
+        horizons: list[tuple[int, str]],
+        roi_mask_fractional: np.ndarray = None
+    ) -> tuple[float, dict[str, float], dict[str, float]]:
+        """Calculeaza volumul curent in ROI si volumul acumulat pe orizonturi."""
         
-        Suma volumelor pentru un orizont include toate sferturile de ora de la
-        momentul T0 pana la momentul orizontului respectiv (integral discret).
-        """
-        
-        # O valoare de 250.0 converteste rata mm/h in metri cubi pentru 1 sfert de ora pe 1 km2
-        # (1 mm/h * 0.25 h * 1,000,000 m2 / 1000 = 250 m3)
         conversion_factor = 250.0
+        frac_mask = roi_mask_fractional if roi_mask_fractional is not None else roi_mask.astype(np.float32)
         
-        # V22: Volumul Meteorologic Semnificativ (taiem stratul invizibil sub prag)
+        # V22: Volumul Meteorologic Semnificativ
         rain_rate_filtered = np.where(rain_rate >= RAIN_THRESHOLD_MIN, rain_rate, 0.0)
-        roi_volume_m3 = float(np.sum(rain_rate_filtered[roi_mask] * pixel_area_km2[roi_mask] * conversion_factor))
+        roi_volume_m3 = float(np.nansum(rain_rate_filtered * pixel_area_km2 * frac_mask * conversion_factor))
         
         # Calculam volumul estimat pentru fiecare sfert de ora din viitor
         step_volumes = {}
         for step, pred_matrix in float_preds.items():
             pred_filtered = np.where(pred_matrix >= RAIN_THRESHOLD_MIN, pred_matrix, 0.0)
-            step_volumes[step] = float(np.sum(pred_filtered[roi_mask] * pixel_area_km2[roi_mask] * conversion_factor))
+            step_volumes[step] = float(np.nansum(pred_filtered * pixel_area_km2 * frac_mask * conversion_factor))
             
         # Acumulam volumul pentru fiecare orizont (Ex: 1h = step 1 + step 2 + step 3 + step 4)
         predicted_volumes_accumulation = {}

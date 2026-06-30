@@ -6,6 +6,7 @@ from collections import defaultdict
 from scipy.spatial.distance import cdist
 
 from src.core.domain import StormCell, CellDiagnostics
+from src.core.algorithms_config import config
 
 class FADiagnosis(Enum):
     BAD_ADVECTION = "BAD_ADVECTION"
@@ -114,20 +115,25 @@ class FalseAlarmInspector:
                 unassigned_preds.append(p)
                 matching_diags[p.cell_id] = MatchingDiagnostics(9999.0, 0.0, 9999.0, None)
         else:
+            # Phase 3: Vectorized Distance Matrix
+            preds_coords = np.array([[p.predicted_centroid_x, p.predicted_centroid_y] for p in preds])
+            obs_coords = np.array([[o.centroid_x, o.centroid_y] for o in obs])
+            dist_matrix = cdist(preds_coords, obs_coords)
+            
             # Hungarian Assignment
             cost_matrix = np.zeros((len(preds), len(obs)))
             for i, p in enumerate(preds):
                 r_pred = np.sqrt(p.area_pixels / np.pi)
                 for j, o in enumerate(obs):
-                    dist = np.hypot(p.predicted_centroid_x - o.centroid_x, p.predicted_centroid_y - o.centroid_y)
+                    dist = dist_matrix[i, j]
                     r_obs = np.sqrt(o.area_pixels / np.pi)
                     
                     iou = self._calculate_iou(p, o)
                     
                     # Invariant radius threshold
-                    max_radius = max(15.0, 0.5 * (r_pred + r_obs))
+                    max_radius = max(config.INSPECTOR_BASE_RADIUS, 0.5 * (r_pred + r_obs))
                     
-                    if dist > max_radius * 2: # Far away
+                    if dist > max_radius * config.INSPECTOR_MAX_RADIUS_MULT: # Far away
                         cost_matrix[i, j] = 9999.0
                     else:
                         # Cost is distance minus IOU bonus
@@ -141,15 +147,15 @@ class FalseAlarmInspector:
                 p = preds[r]
                 o = obs[c]
                 
-                dist = np.hypot(p.predicted_centroid_x - o.centroid_x, p.predicted_centroid_y - o.centroid_y)
+                dist = dist_matrix[r, c]
                 iou = self._calculate_iou(p, o)
                 
                 r_pred = np.sqrt(p.area_pixels / np.pi)
                 r_obs = np.sqrt(o.area_pixels / np.pi)
-                max_radius = max(15.0, 0.5 * (r_pred + r_obs))
+                max_radius = max(config.INSPECTOR_BASE_RADIUS, 0.5 * (r_pred + r_obs))
                 
                 # Validation of assignment
-                if cost < 9000.0 and dist <= max_radius:
+                if cost < 9000.0 and dist <= max_radius * config.INSPECTOR_MAX_RADIUS_MULT:
                     assigned_p_indices.add(r)
                 else:
                     unassigned_preds.append(p)
@@ -160,8 +166,8 @@ class FalseAlarmInspector:
                     unassigned_preds.append(p)
                     # Find nearest obs for diagnostics
                     if len(obs) > 0:
-                        dists = [np.hypot(p.predicted_centroid_x - o.centroid_x, p.predicted_centroid_y - o.centroid_y) for o in obs]
-                        min_idx = np.argmin(dists)
+                        dists = dist_matrix[i, :]
+                        min_idx = int(np.argmin(dists))
                         min_dist = dists[min_idx]
                         iou = self._calculate_iou(p, obs[min_idx])
                         matching_diags[p.cell_id] = MatchingDiagnostics(min_dist, iou, 9999.0, None)
@@ -264,27 +270,34 @@ class FalseAlarmInspector:
         return winner, confidence
 
     def generate_report(self):
+        FalseAlarmReporter.generate_report(self)
+
+
+class FalseAlarmReporter:
+    """Handles the formatting and printing of false alarm reports (SRP Fix)."""
+    @staticmethod
+    def generate_report(inspector: FalseAlarmInspector):
         print("\n" + "="*50)
         print(" FALSE ALARM INSPECTOR REPORT")
         print("="*50)
         
-        if not self.far_records:
+        if not inspector.far_records:
             print("No False Alarms detected.")
             return
             
-        total_fars = len(self.far_records)
+        total_fars = len(inspector.far_records)
         report = []
         report.append(f"Total False Alarms: {total_fars}")
-        report.append(f"Total Evaluated Predictions: {self.total_predictions}")
-        report.append(f"Total True Observations: {self.total_observations}")
-        if self.total_predictions > 0:
-            far_rate = (total_fars / self.total_predictions) * 100
+        report.append(f"Total Evaluated Predictions: {inspector.total_predictions}")
+        report.append(f"Total True Observations: {inspector.total_observations}")
+        if inspector.total_predictions > 0:
+            far_rate = (total_fars / inspector.total_predictions) * 100
             report.append(f"TRUE FAR RATE: {far_rate:.2f}% (False Alarms / Total Predictions)")
         for line in report: print(line)
         
         # Breakdown
         counts = defaultdict(int)
-        for r in self.far_records:
+        for r in inspector.far_records:
             counts[r.classification] += 1
             
         print("\n--- BREAKDOWN ---")
@@ -295,7 +308,7 @@ class FalseAlarmInspector:
         # Averages per Category
         print("\n--- AVERAGES PER CATEGORY ---")
         for diag in FADiagnosis:
-            cat_records = [r for r in self.far_records if r.classification == diag]
+            cat_records = [r for r in inspector.far_records if r.classification == diag]
             if not cat_records: continue
             
             avg_area = np.mean([r.predicted_area for r in cat_records])
@@ -315,7 +328,7 @@ class FalseAlarmInspector:
             
         # Worst Offenders
         print("\n--- WORST OFFENDERS (Top 10 by Confidence) ---")
-        sorted_records = sorted(self.far_records, key=lambda r: r.confidence, reverse=True)
+        sorted_records = sorted(inspector.far_records, key=lambda r: r.confidence, reverse=True)
         for i, r in enumerate(sorted_records[:10]):
             print(f"\n#{i+1} [{r.classification.value}] (Conf: {r.confidence:.2f})")
             print(f"  Cell: {r.prediction_id} | Frame: {r.frame} | Horizon: {r.horizon}")

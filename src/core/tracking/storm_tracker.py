@@ -95,7 +95,7 @@ class StormTracker:
 
             coords = c_cell.coords
             if coords is not None and len(coords) > 0:
-                c_cell.volume = float(np.sum(rain_matrix[coords[:, 0], coords[:, 1]]))
+                c_cell.volume = float(np.nansum(rain_matrix[coords[:, 0], coords[:, 1]]))
                 c_cell.mean_intensity = c_cell.volume / c_area
             else:
                 c_cell.volume = 1.0

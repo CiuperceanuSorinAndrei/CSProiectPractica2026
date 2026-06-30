@@ -13,7 +13,8 @@ from scipy.spatial.distance import cdist
 
 from src.core.domain import StormCell, CellDiagnostics
 from src.core.algorithms_config import config as algo_config
-from src.core.reaction_diffusion import update_energy, lifecycle
+from src.core.nowcast.reaction_diffusion import update_energy, lifecycle
+from src.core.nowcast.kinematics import KinematicsEngine
 
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
@@ -27,14 +28,6 @@ class AdvectionEngine:
             cls._cached_grids[shape] = np.mgrid[0:shape[0], 0:shape[1]].astype(np.float32)
         return cls._cached_grids[shape]
     
-    @staticmethod
-    def _sample_flow_at(flow: np.ndarray | None, x: float, y: float) -> tuple[float, float]:
-        if flow is None:
-            return 0.0, 0.0
-        h, w = flow.shape[:2]
-        x_idx = int(round(np.clip(x, 0, w - 1)))
-        y_idx = int(round(np.clip(y, 0, h - 1)))
-        return float(flow[y_idx, x_idx, 0]), float(flow[y_idx, x_idx, 1])
 
     @staticmethod
     def _create_spatial_growth_mask(
@@ -65,7 +58,7 @@ class AdvectionEngine:
             if flow is not None:
                 v_mag = np.hypot(c.v_x, c.v_y)
                 if v_mag > 0.1:
-                    f_x, f_y = AdvectionEngine._sample_flow_at(flow, cx, cy)
+                    f_x, f_y = KinematicsEngine._sample_flow_at(flow, cx, cy)
                     f_mag = np.hypot(f_x, f_y)
                     if f_mag > 0.1:
                         cos_sim = (c.v_x * f_x + c.v_y * f_y) / (v_mag * f_mag)
@@ -113,48 +106,6 @@ class AdvectionEngine:
         final_mask = growth_mask * decay_mask
         return np.clip(final_mask, 0.0, 5.0)
 
-    @staticmethod
-    def _blend_kinematics(
-        flow_x: np.ndarray, 
-        flow_y: np.ndarray, 
-        simulated_cells: list[StormCell], 
-        grid_h: int, 
-        grid_w: int, 
-        x_grid: np.ndarray, 
-        y_grid: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Blend intre Optical Flow global si predictiile Euler-Lagrange locale."""
-        blended_flow_x = flow_x.copy()
-        blended_flow_y = flow_y.copy()
-        
-        for c in simulated_cells:
-            cx = c.predicted_centroid_x
-            cy = c.predicted_centroid_y
-            vx = c.v_x
-            vy = c.v_y
-            
-            area = max(1.0, c.predicted_area_kalman)
-            radius = max(5.0, np.sqrt(area / np.pi))
-            
-            y_min = max(0, int(cy - 3 * radius))
-            y_max = min(grid_h, int(cy + 3 * radius + 1))
-            x_min = max(0, int(cx - 3 * radius))
-            x_max = min(grid_w, int(cx + 3 * radius + 1))
-            
-            if y_min >= y_max or x_min >= x_max:
-                continue
-                
-            y_slice = slice(y_min, y_max)
-            x_slice = slice(x_min, x_max)
-            
-            kalman_confidence = np.clip(10.0 / (10.0 + c.uncertainty_trace), 0.1, 0.9)
-            dist_sq = (x_grid[y_slice, x_slice] - cx)**2 + (y_grid[y_slice, x_slice] - cy)**2
-            weight = np.exp(-dist_sq / (2.0 * radius**2)) * kalman_confidence
-            
-            blended_flow_x[y_slice, x_slice] = blended_flow_x[y_slice, x_slice] * (1 - weight) + vx * weight
-            blended_flow_y[y_slice, x_slice] = blended_flow_y[y_slice, x_slice] * (1 - weight) + vy * weight
-            
-        return blended_flow_x.astype(np.float32), blended_flow_y.astype(np.float32)
 
     @staticmethod
     def _apply_sprog_diffusion(
@@ -177,17 +128,10 @@ class AdvectionEngine:
         if step <= 2:
             return shifted_grown.copy()
         
-        # Kernel-ul de dilatare creste liniar cu orizontul: la step=6 (30m) -> 3px,
-        # la step=12 (1h) -> 5px, la step=24 (2h) -> 9px
-        # Adaugam si incertitudinea Kalman a trackerului
-        base_radius = max(1, int(base_uncertainty * 0.15 * step))
-        base_radius = min(base_radius, 5)  # Cap la 5px pentru a nu umfla excesiv
-        
-        kernel_size = 2 * base_radius + 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        
-        # Dilatare globala de baza - extinde toti pixelii de ploaie cu raza de baza
-        shifted_grown_dilated = cv2.dilate(shifted_grown, kernel, iterations=1)
+        # V26: Am eliminat dilatarea globala de baza S-PROG pentru a optimiza FAR (False Alarm Ratio).
+        # Dilatarea morfologica globala umfla excesiv toate ploile, crescand masiv alarmele false.
+        # Pastram doar un baseline si folosim strict dilatarea locala bazata pe incertitudinea Kalman.
+        shifted_grown_dilated = shifted_grown.copy()
         
         if not valid_cells:
             return shifted_grown_dilated
@@ -201,15 +145,12 @@ class AdvectionEngine:
             extra_px = int(0.1 * step + 0.03 * uncertainty)
             extra_px = min(extra_px, 4)  # Cap la 4px suplimentar
             
-            if extra_px < 1:
-                continue
+            # V26: Am eliminat dilatarea globala de baza S-PROG pentru a optimiza FAR (False Alarm Ratio).
+            # Dilatarea morfologica globala umfla excesiv toate ploile, crescand masiv alarmele false.
+            # Pastram doar un baseline si folosim strict dilatarea locala bazata pe incertitudinea Kalman.
             
-            gamma = 0.8
-            damping = 0.95
-            term_a = (2*step - (1+gamma)*(1-gamma**step)/(1-gamma)) / (2*(1-gamma))
-            term_v = (1 - damping**step) / (1 - damping)
-            cx = c.centroid_x + c.v_x * term_v + c.a_x * term_a
-            cy = c.centroid_y + c.v_y * term_v + c.a_y * term_a
+            cx = c.predicted_centroid_x
+            cy = c.predicted_centroid_y
             
             area = max(1.0, c.predicted_area_kalman)
             radius = max(5.0, np.sqrt(area / np.pi)) * 1.5
@@ -225,20 +166,28 @@ class AdvectionEngine:
             y_slice = slice(y_min, y_max)
             x_slice = slice(x_min, x_max)
             
-            # Dilatare suplimentara pe patch-ul local al acestei furtuni
+            # Phase 2: Mass Conservation in S-PROG (FAR Blowup fix)
+            # Folosim GaussianBlur pentru a conserva energia E, in loc de dilate (care o inventeaza din neant)
             local_ksize = 2 * extra_px + 1
-            local_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (local_ksize, local_ksize))
-            patch_orig = shifted_grown[y_slice, x_slice]
-            patch_dilated_extra = cv2.dilate(patch_orig, local_kernel, iterations=1)
+            patch_orig = shifted_grown[y_slice, x_slice].copy()
+            sum_orig = np.nansum(patch_orig)
+            
+            sigma = extra_px / 2.0 if extra_px > 0 else 1.0
+            patch_blurred = cv2.GaussianBlur(patch_orig, (local_ksize, local_ksize), sigma)
+            
+            # Rescalare pentru conservarea exacta a masei
+            sum_blur = np.nansum(patch_blurred)
+            if sum_blur > 1e-6 and sum_orig > 1e-6:
+                patch_blurred *= (sum_orig / sum_blur)
             
             # Blendare proportionala cu incertitudinea: furtunile nesigure se extind mai mult
             kalman_confidence = np.clip(10.0 / (10.0 + c.uncertainty_trace), 0.1, 0.9)
-            extra_blend = 1.0 - kalman_confidence  # nesigure -> blend mai mare spre dilatare extra
+            extra_blend = 1.0 - kalman_confidence
             
             patch_base = shifted_grown_dilated[y_slice, x_slice]
             shifted_grown_dilated[y_slice, x_slice] = np.maximum(
                 patch_base,
-                patch_dilated_extra * extra_blend
+                patch_blurred * extra_blend
             )
         
         return shifted_grown_dilated
@@ -278,6 +227,10 @@ class AdvectionEngine:
         
         # State pentru Reaction-Diffusion (Phase 4)
         simulated_cells = [c.clone() for c in valid_cells]
+        
+        # Phase 3: Pre-allocate NumPy arrays for centroid coordinates
+        coords = np.zeros((len(simulated_cells), 2), dtype=np.float64)
+        
         for c in simulated_cells:
             c.cumulative_R = 1.0
             # Initialize EMA flow state with initial velocity
@@ -290,35 +243,14 @@ class AdvectionEngine:
         
         for step in range(1, max_step + 1):
             # 1. Update Kinematics (Euler-Lagrange with Flow Forcing)
-            for c in simulated_cells:
-                if flow is not None:
-                    # Eulerian Forcing
-                    flow_coupling = 0.25 # Intensitatea cu care vântul afectează mișcarea
-                    
-                    # EROARE CRITICA REPARATA: flow-ul este o matrice statica de la T0.
-                    # Daca citim la predicted_centroid, furtuna va iesi din zona de ploaie de la T0 si flow va fi 0, oprind furtuna.
-                    # Trebuie sa citim la T0 centroid!
-                    f_x, f_y = AdvectionEngine._sample_flow_at(flow, c.centroid_x, c.centroid_y)
-                    
-                    # Low-pass filter (EMA)
-                    c.flow_vec_smooth_x = 0.8 * c.flow_vec_smooth_x + 0.2 * f_x
-                    c.flow_vec_smooth_y = 0.8 * c.flow_vec_smooth_y + 0.2 * f_y
-                    
-                    # Accelerație generată de vânt
-                    a_flow_x = (c.flow_vec_smooth_x - c.v_x) * flow_coupling
-                    a_flow_y = (c.flow_vec_smooth_y - c.v_y) * flow_coupling
-                    
-                    # Viteza combina inertia, curgerea (flow) si acceleratia curbata Kalman (amortizata)
-                    c.v_x += a_flow_x + c.a_x * (0.85 ** step)
-                    c.v_y += a_flow_y + c.a_y * (0.85 ** step)
-                
-                # Integratorul (viteză -> poziție)
-                c.predicted_centroid_x += c.v_x
-                c.predicted_centroid_y += c.v_y
+            KinematicsEngine.update_positions(simulated_cells, flow, step)
                 
             # 2. Update Reaction-Diffusion (Energetics)
             if len(simulated_cells) > 0:
-                coords = np.array([[c.predicted_centroid_x, c.predicted_centroid_y] for c in simulated_cells])
+                for idx_c, c in enumerate(simulated_cells):
+                    coords[idx_c, 0] = c.predicted_centroid_x
+                    coords[idx_c, 1] = c.predicted_centroid_y
+                    
                 if len(coords) > 1:
                     dist_matrix = cdist(coords, coords)
                 else:
@@ -360,15 +292,14 @@ class AdvectionEngine:
                     c.cumulative_R *= R_applied
                     c.diagnostics = diag
             
-            blended_flow_x, blended_flow_y = AdvectionEngine._blend_kinematics(
+            blended_flow_x, blended_flow_y = KinematicsEngine.blend_kinematics(
                 flow_x, flow_y, simulated_cells, grid_h, grid_w, x_grid, y_grid
             )
 
-            flow_at_p_x = cv2.remap(blended_flow_x, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            flow_at_p_y = cv2.remap(blended_flow_y, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            
-            map_x = (map_x - flow_at_p_x).astype(np.float32)
-            map_y = (map_y - flow_at_p_y).astype(np.float32)
+            # Phase 1: Fix Semi-Lagrangian Integration
+            # We map backward from the departure point using the current grid flow
+            map_x = cv2.remap(map_x, (x_grid - blended_flow_x).astype(np.float32), (y_grid - blended_flow_y).astype(np.float32), interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            map_y = cv2.remap(map_y, (x_grid - blended_flow_x).astype(np.float32), (y_grid - blended_flow_y).astype(np.float32), interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             
             shifted = cv2.remap(
                 rain_rate, map_x, map_y, 

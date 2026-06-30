@@ -40,17 +40,25 @@ class StormFilter:
 
     @staticmethod
     def _build_transition_matrix(dt: float, gamma: float) -> np.ndarray:
-        """Matricea de tranzitie F (Constant Acceleration + amortizare Singer pe acceleratii)."""
+        """Matricea de tranzitie F integrata analitic (Singer Damped Acceleration Model)."""
+        if gamma >= 1.0:
+            term_a = 0.5 * dt**2
+            term_v = dt
+        else:
+            alpha = -np.log(gamma) / dt
+            term_v = (1.0 - gamma) / alpha
+            term_a = (gamma + alpha * dt - 1.0) / (alpha**2)
+
         return np.array([
-            [1.0, 0.0,  dt, 0.0, 0.5*dt**2, 0.0,       0.0, 0.0,       0.0], # x
-            [0.0, 1.0, 0.0,  dt, 0.0,       0.5*dt**2, 0.0, 0.0,       0.0], # y
-            [0.0, 0.0, 1.0, 0.0,  dt,       0.0,       0.0, 0.0,       0.0], # vx
-            [0.0, 0.0, 0.0, 1.0, 0.0,        dt,       0.0, 0.0,       0.0], # vy
-            [0.0, 0.0, 0.0, 0.0, gamma,     0.0,       0.0, 0.0,       0.0], # ax
-            [0.0, 0.0, 0.0, 0.0, 0.0,       gamma,     0.0, 0.0,       0.0], # ay
-            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       1.0,  dt, 0.5*dt**2], # area
-            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       0.0, 1.0,        dt], # d_area
-            [0.0, 0.0, 0.0, 0.0, 0.0,       0.0,       0.0, 0.0,     gamma], # dd_area
+            [1.0, 0.0,  dt, 0.0, term_a, 0.0,       0.0, 0.0,       0.0], # x
+            [0.0, 1.0, 0.0,  dt, 0.0,    term_a,    0.0, 0.0,       0.0], # y
+            [0.0, 0.0, 1.0, 0.0, term_v, 0.0,       0.0, 0.0,       0.0], # vx
+            [0.0, 0.0, 0.0, 1.0, 0.0,    term_v,    0.0, 0.0,       0.0], # vy
+            [0.0, 0.0, 0.0, 0.0, gamma,  0.0,       0.0, 0.0,       0.0], # ax
+            [0.0, 0.0, 0.0, 0.0, 0.0,    gamma,     0.0, 0.0,       0.0], # ay
+            [0.0, 0.0, 0.0, 0.0, 0.0,    0.0,       1.0,  dt,    term_a], # area
+            [0.0, 0.0, 0.0, 0.0, 0.0,    0.0,       0.0, 1.0,    term_v], # d_area
+            [0.0, 0.0, 0.0, 0.0, 0.0,    0.0,       0.0, 0.0,     gamma], # dd_area
         ])
 
     @staticmethod
@@ -68,8 +76,8 @@ class StormFilter:
         Q = np.zeros((9, 9))
 
         def add_singer_q_block(indices, var):
-            if gamma >= 1.0:
-                # Fallback la Constant Acceleration (White Noise)
+            if gamma > 0.95:
+                # Fallback la Constant Acceleration (White Noise) pentru a preveni catastrophic cancellation
                 q = var * np.array([
                     [dt**5/20, dt**4/8, dt**3/6],
                     [dt**4/8,  dt**3/3, dt**2/2],
@@ -118,6 +126,9 @@ class StormFilter:
     def update(self, observed_x: float, observed_y: float, observed_area: float) -> None:
         obs_z = np.array([[observed_x], [observed_y], [np.log(max(observed_area, 1.0))]])
         
+        # Salvăm covarianța prior pentru Joseph Form
+        P_prior = self._kf.P_prior.copy() if hasattr(self._kf, 'P_prior') else self._kf.P.copy()
+        
         try:
             self._kf.update(obs_z)
         except np.linalg.LinAlgError:
@@ -131,7 +142,7 @@ class StormFilter:
         K = self._kf.K
         H = self._kf.H
         I_KH = I - np.dot(K, H)
-        self._kf.P = np.dot(np.dot(I_KH, self._kf.P), I_KH.T) + np.dot(np.dot(K, self._kf.R), K.T)
+        self._kf.P = np.dot(np.dot(I_KH, P_prior), I_KH.T) + np.dot(np.dot(K, self._kf.R), K.T)
         
         # V28: PSD Forcing (Eigen-Decomposition) pentru stabilitate numerica
         self._kf.P = (self._kf.P + self._kf.P.T) / 2.0

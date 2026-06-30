@@ -47,7 +47,49 @@ class PolygonIntersection:
         flat_lats = lat_grid.ravel()
         
         point_geoms = shapely.points(flat_lons, flat_lats)
-        # returneaza un array boolean flat, il remodelam inapoi la shape-ul gridului
         mask_flat = shapely.contains(polygon, point_geoms)
         
         return mask_flat.reshape(lon_grid.shape)
+
+    @staticmethod
+    def create_fractional_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
+        """Creeaza o masca fractionara [0.0, 1.0] bazata pe acoperirea exacta a poligonului pe fiecare pixel."""
+        mask_frac = np.zeros_like(lon_grid, dtype=np.float32)
+        if polygon is None or lon_grid.shape != lat_grid.shape:
+            return mask_frac
+            
+        min_lon, min_lat, max_lon, max_lat = polygon.bounds
+        buffer = 0.05
+        
+        y_idx, x_idx = np.where(
+            (lon_grid >= min_lon - buffer) & (lon_grid <= max_lon + buffer) &
+            (lat_grid >= min_lat - buffer) & (lat_grid <= max_lat + buffer)
+        )
+        
+        if len(y_idx) == 0:
+            return mask_frac
+            
+        from shapely.geometry import Polygon
+        
+        lat_diff_y = np.gradient(lat_grid, axis=0)
+        lon_diff_x = np.gradient(lon_grid, axis=1)
+        
+        for i, j in zip(y_idx, x_idx):
+            c_lon = lon_grid[i, j]
+            c_lat = lat_grid[i, j]
+            
+            dlon = abs(lon_diff_x[i, j]) / 2.0
+            dlat = abs(lat_diff_y[i, j]) / 2.0
+            
+            pixel_poly = Polygon([
+                (c_lon - dlon, c_lat - dlat),
+                (c_lon + dlon, c_lat - dlat),
+                (c_lon + dlon, c_lat + dlat),
+                (c_lon - dlon, c_lat + dlat)
+            ])
+            
+            if polygon.intersects(pixel_poly):
+                intersection = polygon.intersection(pixel_poly)
+                mask_frac[i, j] = intersection.area / pixel_poly.area
+                
+        return mask_frac

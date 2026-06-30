@@ -33,6 +33,7 @@ class FrameGeometry:
     roi_mask: np.ndarray
     y_slice: slice
     x_slice: slice
+    roi_mask_fractional: np.ndarray = None
 
 
 from src.core.domain import StormCell
@@ -98,14 +99,25 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
     y_slice = slice(int(y_idx[0]), int(y_idx[-1]) + 1)
 
     lon_grid, lat_grid = GeoProjection.grid_to_latlon(nx[x_slice], ny[y_slice], proj)
-    # Aproximare aria unui pixel (~3km * 3km / cos(lat)).
-    pixel_area_km2 = 3.0 * (3.0 / np.cos(np.radians(lat_grid)))
+    
+    # Phase 2: Exact pixel area using geodesic gradients instead of 1/cos(lat) approximation
+    lat_diff_y = np.gradient(lat_grid, axis=0)
+    lon_diff_y = np.gradient(lon_grid, axis=0)
+    lat_diff_x = np.gradient(lat_grid, axis=1)
+    lon_diff_x = np.gradient(lon_grid, axis=1)
+    
+    dy_km = _haversine_km(lat_grid, lon_grid, lat_grid + lat_diff_y, lon_grid + lon_diff_y)
+    dx_km = _haversine_km(lat_grid, lon_grid, lat_grid + lat_diff_x, lon_grid + lon_diff_x)
+    pixel_area_km2 = dx_km * dy_km
     if polygon is not None:
         from src.geo.intersection import PolygonIntersection
-        roi_mask = PolygonIntersection.create_polygon_mask(polygon, lon_grid, lat_grid)
+        roi_mask_fractional = PolygonIntersection.create_fractional_mask(polygon, lon_grid, lat_grid)
+        roi_mask = roi_mask_fractional > 0.0
     else:
         roi_mask = _haversine_km(center_lat, center_lon, lat_grid, lon_grid) <= radius_km
-    return FrameGeometry(lon_grid, lat_grid, pixel_area_km2, roi_mask, y_slice, x_slice)
+        roi_mask_fractional = roi_mask.astype(np.float32)
+        
+    return FrameGeometry(lon_grid, lat_grid, pixel_area_km2, roi_mask, y_slice, x_slice, roi_mask_fractional)
 
 
 def _read_rain_window(file_path: str, y_slice: slice, x_slice: slice) -> np.ndarray | None:
@@ -127,10 +139,13 @@ def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | 
     rr = _read_rain_window(file_path, geom.y_slice, geom.x_slice)
     if rr is None:
         return None
-    rr = np.nan_to_num(rr, nan=0.0, posinf=0.0, neginf=0.0)
-    rr[rr < 0] = 0.0
+        
+    # Phase 2: Preserve NaNs as missing data instead of coercing to 0.0
+    rr[np.isinf(rr)] = 0.0
+    # Using np.where to safely check < 0 even with NaNs present
+    rr[np.where((rr < 0) & (~np.isnan(rr)))] = 0.0
 
-    max_rain = float(np.max(rr[geom.roi_mask])) if np.any(geom.roi_mask) else 0.0
+    max_rain = float(np.nanmax(rr[geom.roi_mask])) if np.any(geom.roi_mask) and not np.all(np.isnan(rr[geom.roi_mask])) else 0.0
 
     lon_grid, lat_grid = geom.lon_grid, geom.lat_grid
     lon_min, lon_max, lat_min, lat_max = bbox
