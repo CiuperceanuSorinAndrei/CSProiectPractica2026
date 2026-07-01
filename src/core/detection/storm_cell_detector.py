@@ -98,7 +98,7 @@ class StormCellDetector:
             if max_area is not None and cell_pixels > max_area:
                 continue
                 
-            y_center, x_center = prop.centroid
+            y_center, x_center = prop.centroid_weighted
             global_coords = prop.coords
             
             cells.append(StormCell(
@@ -108,6 +108,9 @@ class StormCellDetector:
                 area_pixels=cell_pixels,
                 max_intensity=float(prop.intensity_max),
                 mean_intensity=float(prop.intensity_mean),
+                orientation=float(getattr(prop, 'orientation', 0.0)),
+                major_axis_length=float(getattr(prop, 'axis_major_length', 0.0)),
+                minor_axis_length=float(getattr(prop, 'axis_minor_length', 0.0)),
                 coords=global_coords,
             ))
 

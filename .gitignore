@@ -12,3 +12,6 @@ data/raw/
 
 # Date de logare
 .env
+
+.agents
+.agent

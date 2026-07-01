@@ -10,16 +10,16 @@ class FrameHistory:
 
     def reset(self) -> None:
         self.last_frame_idx = -1
-        self.total_volume_m3 = 0.0
+        self.total_map_mm = 0.0
         self.frames_processed = 0
         self.last_result = None
         
         # Stocam istoricul valorilor instantanee
         self.true_volumes = []
-        self.pred_volumes = {"30m": [], "1h": [], "2h": []}
+        self.pred_volumes = {"15m": [], "1h": [], "2h": []}
         
         # Volum acumulat estimat pe mai multe orizonturi (legacy, pentru afisare rapida)
-        self.predicted_volume_accumulation = {"30m": 0.0, "1h": 0.0, "2h": 0.0}
+        self.predicted_volume_accumulation = {"15m": 0.0, "1h": 0.0, "2h": 0.0}
         
         # Metric history (CSI, FAR, POD, FSS)
         self.metrics_history = {
@@ -36,14 +36,14 @@ class FrameHistory:
         self.far_inspector = FalseAlarmInspector(area_conservation_tolerance=0.20)
 
     def accumulate(self, result) -> None:
-        self.total_volume_m3 += result.roi_volume_m3
+        self.total_map_mm += result.roi_map_mm
         self.frames_processed += 1
         self.last_result = result
         
-        self.true_volumes.append(result.roi_volume_m3)
+        self.true_volumes.append(result.roi_map_mm)
         
         if hasattr(result, "instant_predicted_volumes") and result.instant_predicted_volumes:
-            for horizon in ["30m", "1h", "2h"]:
+            for horizon in ["15m", "1h", "2h"]:
                 val = result.instant_predicted_volumes.get(horizon, 0.0)
                 self.predicted_volume_accumulation[horizon] += val
                 self.pred_volumes[horizon].append(val)
@@ -61,7 +61,8 @@ class FrameHistory:
             
         # Adaugam perechile de predicții (din trecut) și observații curente
         # Horizons are 2 (30m), 4 (1h), 8 (2h)
-        horizons_map = {2: "30m", 4: "1h", 8: "2h"}
+        # ponytail: 15m delay calibration
+        horizons_map = {2: "15m", 5: "1h", 9: "2h"}
         
         for steps_back, h_name in horizons_map.items():
             # If we have enough history, the prediction from `frames_processed - steps_back` is validating NOW

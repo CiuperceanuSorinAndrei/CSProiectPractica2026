@@ -274,8 +274,8 @@ class DashboardLayout:
                 html.H4("Volum", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
                     dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Aport Curent (15m)", "val-current-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Anticipat (Rata/15m)", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("MAP Curent (L/m²)", "val-current-vol", "info", "info")),
+                    dbc.Col(self._metric_card("MAP Anticipat 1h (L/m²)", "val-predicted-vol", "info", "info")),
                     dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
                 html.H4("Performanță Predicție (CSI/FAR/POD/FSS)", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),

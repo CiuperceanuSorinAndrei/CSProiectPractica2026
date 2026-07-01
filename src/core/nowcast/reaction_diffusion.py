@@ -3,6 +3,9 @@ import numpy as np
 def spatial_diffusion(E: float, neighbors_E: np.ndarray, gamma: float = 0.15) -> float:
     """Bounded diffusion (convex combination)"""
     neighbor_mean = neighbors_E.mean() if len(neighbors_E) > 0 else E
+    # ponytail: prevent ghost-heating (parasitic FAR cells feeding off nearby supercells)
+    if neighbor_mean > E:
+        neighbor_mean = E + (neighbor_mean - E) * 0.1
     return (1 - gamma) * E + gamma * neighbor_mean
 
 def sigmoid(x: float) -> float:
@@ -24,10 +27,13 @@ def reaction(E: float, dE: float, alpha_g: float = 1.5, alpha_d: float = 1.8, be
         # Growth regime: creștere proporțională cu derivata (scale invariant)
         R = base_inertia + alpha_g * dE_frac
         
-        # Hard-cap asimptotic: cu cat E este mai mare, cu atat cresterea maxima se plafoneaza la 1.0.
-        # Aceasta previne explozia la infinit a super-celulelor (Ghost Heating).
-        max_R = 1.0 + 2.0 / (abs(E) + 1.0)
+        # ponytail: damped log-space compounding prevents exponential volumetric explosions at 2h horizons.
+        max_R = 1.0 + 0.05 / (abs(E) + 1.0)
         return min(R, max_R)
+        
+    # ponytail: fast kill for small dissipating cells to prevent BAD_ADVECTION ghost storms
+    if E < 1.0:
+        base_inertia *= max(E, 0.0)
         
     # Decay regime: colaps exponențial
     return base_inertia * np.exp(-alpha_d * abs(dE_frac))

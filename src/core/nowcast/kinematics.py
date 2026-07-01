@@ -16,7 +16,19 @@ class KinematicsEngine:
         h, w = flow.shape[:2]
         x_idx = int(round(np.clip(x, 0, w - 1)))
         y_idx = int(round(np.clip(y, 0, h - 1)))
-        return float(flow[y_idx, x_idx, 0]), float(flow[y_idx, x_idx, 1])
+        
+        y_min = max(0, y_idx - 1)
+        y_max = min(h, y_idx + 2)
+        x_min = max(0, x_idx - 1)
+        x_max = min(w, x_idx + 2)
+        
+        patch = flow[y_min:y_max, x_min:x_max]
+        if patch.size == 0:
+            return 0.0, 0.0
+            
+        u = float(np.nanmedian(patch[:, :, 0]))
+        v = float(np.nanmedian(patch[:, :, 1]))
+        return u, v
 
     @staticmethod
     def update_positions(simulated_cells: list[StormCell], flow: np.ndarray | None, step: int):

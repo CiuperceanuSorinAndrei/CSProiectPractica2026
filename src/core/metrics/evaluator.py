@@ -45,18 +45,22 @@ class Evaluator:
     ) -> tuple[float, dict[str, float], dict[str, float]]:
         """Calculeaza volumul curent in ROI si volumul acumulat pe orizonturi."""
         
-        conversion_factor = 250.0
         frac_mask = roi_mask_fractional if roi_mask_fractional is not None else roi_mask.astype(np.float32)
         
-        # V22: Volumul Meteorologic Semnificativ
+        # ponytail: Hydrological conversion from absolute m3 to Mean Areal Precipitation (MAP) in L/m2 (mm)
+        area_km2 = float(np.nansum(pixel_area_km2 * frac_mask))
+        if area_km2 < 1e-6:
+            area_km2 = 1.0
+            
         rain_rate_filtered = np.where(rain_rate >= RAIN_THRESHOLD_MIN, rain_rate, 0.0)
-        roi_volume_m3 = float(np.nansum(rain_rate_filtered * pixel_area_km2 * frac_mask * conversion_factor))
+        # MAP = average rain depth over the area in 15 mins (rain_rate * 0.25)
+        roi_map_mm = float(np.nansum(rain_rate_filtered * pixel_area_km2 * frac_mask * 0.25) / area_km2)
         
         # Calculam volumul estimat pentru fiecare sfert de ora din viitor
         step_volumes = {}
         for step, pred_matrix in float_preds.items():
             pred_filtered = np.where(pred_matrix >= RAIN_THRESHOLD_MIN, pred_matrix, 0.0)
-            step_volumes[step] = float(np.nansum(pred_filtered * pixel_area_km2 * frac_mask * conversion_factor))
+            step_volumes[step] = float(np.nansum(pred_filtered * pixel_area_km2 * frac_mask * 0.25) / area_km2)
             
         # Acumulam volumul pentru fiecare orizont (Ex: 1h = step 1 + step 2 + step 3 + step 4)
         predicted_volumes_accumulation = {}
@@ -68,4 +72,4 @@ class Evaluator:
             predicted_volumes_accumulation[name] = accumulated_vol
             instant_predicted_volumes[name] = step_volumes.get(target_step, 0.0)
             
-        return roi_volume_m3, predicted_volumes_accumulation, instant_predicted_volumes
+        return roi_map_mm, predicted_volumes_accumulation, instant_predicted_volumes

@@ -21,8 +21,8 @@ class FrameResult:
     mean_centroid_error: float
     mean_size_error: float
     num_tracked: int
-    roi_volume_m3: float
-    predicted_roi_volume_m3: float
+    roi_map_mm: float
+    predicted_roi_map_mm: float
     predicted_volumes_horizons: dict[str, float]
     instant_predicted_volumes: dict[str, float]
     global_csi: dict[str, float]
@@ -31,6 +31,7 @@ class FrameResult:
     global_fss: dict[str, float]
     raw_tracked_cells: list[Any] = None
     raw_predicted_cells: dict[str, list[Any]] = None
+    sparse_preds: Any = None
 
 class FrameProcessor:
     """Serviciu de domeniu stateless. Primeste input-uri decodate si intoarce FrameResult."""
@@ -40,7 +41,8 @@ class FrameProcessor:
         prep: FramePrep, 
         geom: FrameGeometry, 
         tracker: StormTracker, 
-        predictions_queue: list
+        predictions_queue: list,
+        advection_engine: AdvectionEngine
     ) -> FrameResult:
         rain_rate = prep.rain_rate
         roi_mask = geom.roi_mask
@@ -49,20 +51,18 @@ class FrameProcessor:
         cells_for_tracking = [c.clone() for c in prep.filtered_cells]
         tracked_cells, flow = tracker.track(cells_for_tracking, rain_rate)
 
-        horizons = [(2, "30m"), (4, "1h"), (8, "2h")]
+        # ponytail: 15m delay calibration. Step 2 (30m from image) = 15m real-time forecast.
+        # Step 5 (1h15m from image) = 1h real-time forecast. Step 9 = 2h real-time.
+        horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
         csi, far, pod, fss = Evaluator.calculate_global_metrics(
             rain_rate, roi_mask, predictions_queue, horizons
         )
 
-        sparse_preds, float_preds, predicted_cells_dict = AdvectionEngine.extrapolate(
+        sparse_preds, float_preds, predicted_cells_dict = advection_engine.extrapolate(
             rain_rate, flow, tracked_cells, horizons
         )
 
-        predictions_queue.append((sparse_preds, predicted_cells_dict))
-        if len(predictions_queue) > 25:
-            predictions_queue.pop(0)
-
-        roi_volume_m3, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
+        roi_map_mm, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
             rain_rate, float_preds, roi_mask, geom.pixel_area_km2, horizons,
             getattr(geom, 'roi_mask_fractional', None)
         )
@@ -87,12 +87,13 @@ class FrameProcessor:
             mean_centroid_error=float(np.mean(valid_errors)) if valid_errors else 0.0,
             mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
             num_tracked=len([c for c in tracked_cells if getattr(c, "is_tracked", False)]),
-            roi_volume_m3=roi_volume_m3,
-            predicted_roi_volume_m3=predicted_volumes.get("1h", 0.0),
+            roi_map_mm=roi_map_mm,
+            predicted_roi_map_mm=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,
             instant_predicted_volumes=instant_predicted_volumes,
             global_csi=csi,
             global_far=far,
             global_pod=pod,
             global_fss=fss,
+            sparse_preds=sparse_preds,
         )

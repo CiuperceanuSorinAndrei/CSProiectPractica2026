@@ -1,7 +1,7 @@
 import os
 import glob
 from src.dashboard.session_manager import SessionManager
-from src.core.frame_processor import FrameProcessor
+from src.core.pipeline.frame_processor import FrameProcessor
 
 def main():
     print("Initializing DataService and discovering files...")
@@ -52,12 +52,12 @@ def main():
     print(" FINAL PERFORMANCE REPORT ")
     print("="*50)
     
-    vol_real = hist.total_volume_m3 / 1000.0
+    vol_real = hist.total_map_mm
     
-    for horizon in ["30m", "1h", "2h"]:
-        vol_pred = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
+    for horizon in ["15m", "1h", "2h"]:
+        vol_pred = hist.predicted_volume_accumulation.get(horizon, 0.0)
         delta = ((vol_pred - vol_real) / vol_real * 100) if vol_real > 0 else 0.0
-        print(f"Horizon {horizon}: Real Vol {vol_real:.2f}, Pred Vol {vol_pred:.2f}, Delta {delta:+.3f}%")
+        print(f"Horizon {horizon}: Real MAP {vol_real:.2f}, Pred MAP {vol_pred:.2f}, Delta {delta:+.3f}%")
 
     print("\n" + "-"*50)
     print(" PIXEL-BASED METRICS (CSI / FAR / POD) ")
@@ -68,7 +68,7 @@ def main():
     avg_far = defaultdict(list)
     avg_pod = defaultdict(list)
     
-    for h in ["30m", "1h", "2h"]:
+    for h in ["15m", "1h", "2h"]:
         csis = [m.get(h, 0) for m in hist.metrics_history["csi"] if m.get(h, 0) > 0]
         fars = [m.get(h, 0) for m in hist.metrics_history["far"] if m.get(h, 0) > 0]
         pods = [m.get(h, 0) for m in hist.metrics_history["pod"] if m.get(h, 0) > 0]

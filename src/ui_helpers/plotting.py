@@ -134,17 +134,31 @@ class StormMapPlotter:
             )
 
             # Contur prezis din masca
-            if "predicted_mask" in cell and cell.get("is_tracked", False):
-                StormMapPlotter._draw_predicted_contour(ax, cell["predicted_mask"], lon_grid, lat_grid, proj)
+            if "predicted_coords" in cell and cell.get("is_tracked", False):
+                StormMapPlotter._draw_predicted_contour(ax, cell["predicted_coords"], lon_grid, lat_grid, proj)
 
             # Vector de deplasare al centroidului
             if cell.get("is_tracked", False):
                 StormMapPlotter._draw_velocity_arrow(ax, cell, lon_grid, lat_grid, proj)
 
     @staticmethod
-    def _draw_predicted_contour(ax, predicted_mask: np.ndarray, lon_grid: np.ndarray, lat_grid: np.ndarray, proj) -> None:
-        """Deseneaza conturul verde al mastii predictive."""
-        mask_uint8 = predicted_mask.astype(np.uint8)
+    def _draw_predicted_contour(ax, predicted_coords: list | np.ndarray, lon_grid: np.ndarray, lat_grid: np.ndarray, proj) -> None:
+        """Deseneaza conturul verde al mastii predictive reconstruind temporar masca."""
+        if predicted_coords is None or len(predicted_coords) == 0:
+            return
+            
+        mask_uint8 = np.zeros(lon_grid.shape, dtype=np.uint8)
+        arr = np.asarray(predicted_coords)
+        
+        valid_y = arr[:, 0]
+        valid_x = arr[:, 1]
+        
+        valid_mask = (
+            (valid_y >= 0) & (valid_y < lon_grid.shape[0]) &
+            (valid_x >= 0) & (valid_x < lon_grid.shape[1])
+        )
+        mask_uint8[valid_y[valid_mask], valid_x[valid_mask]] = 1
+        
         contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for contour in contours:

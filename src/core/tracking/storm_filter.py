@@ -1,7 +1,7 @@
 """StormFilter: Starea predictiva Kalman a unei furtuni.
 
-Implementeaza un model Constant Acceleration (CA) cu stare 8D:
-[x, y, vx, vy, ax, ay, area, d_area]
+Implementeaza un model Constant Acceleration (CA) cu stare 9D:
+[x, y, vx, vy, ax, ay, area, d_area, dd_area]
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class StormFilter:
             [initial_x], [initial_y],
             [initial_vx], [initial_vy],
             [0.0], [0.0],  # ax, ay
-            [np.log(max(initial_area, 1.0))], [initial_d_area],
+            [np.log(max(initial_area, 1.0))], [initial_d_area / max(initial_area, 1.0)],
             [0.0]  # dd_area
         ])
 
@@ -105,9 +105,10 @@ class StormFilter:
                 for j in range(3):
                     Q[indices[i], indices[j]] = q[i, j]
 
-        add_singer_q_block([0, 2, 4], 0.05)
-        add_singer_q_block([1, 3, 5], 0.05)
-        add_singer_q_block([6, 7, 8], 0.01)  # log-space area noise
+        # ponytail: dramatically reduced process noise to prevent uncertainty trace from exploding during 120-step predict-only phases (which caused massive FAR umbrellas)
+        add_singer_q_block([0, 2, 4], 0.005)
+        add_singer_q_block([1, 3, 5], 0.005)
+        add_singer_q_block([6, 7, 8], 0.001)  # log-space area noise
         return Q
 
     @staticmethod
@@ -142,14 +143,12 @@ class StormFilter:
         K = self._kf.K
         H = self._kf.H
         I_KH = I - np.dot(K, H)
-        self._kf.P = np.dot(np.dot(I_KH, P_prior), I_KH.T) + np.dot(np.dot(K, self._kf.R), K.T)
-        
-        # V28: PSD Forcing (Eigen-Decomposition) pentru stabilitate numerica
-        self._kf.P = (self._kf.P + self._kf.P.T) / 2.0
+        # ponytail: compute P_new safely and assign it immediately. If PSD forcing fails, a slightly non-PSD matrix is far better than discarding the update and exploding uncertainty.
+        P_new = np.dot(np.dot(I_KH, P_prior), I_KH.T) + np.dot(np.dot(K, self._kf.R), K.T)
+        self._kf.P = (P_new + P_new.T) / 2.0
         try:
             eigval, eigvec = np.linalg.eigh(self._kf.P)
-            eigval = np.maximum(eigval, 1e-8)
-            self._kf.P = (eigvec * eigval) @ eigvec.T
+            self._kf.P = (eigvec * np.maximum(eigval, 1e-8)) @ eigvec.T
         except np.linalg.LinAlgError:
             pass
 

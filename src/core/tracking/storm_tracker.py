@@ -24,17 +24,7 @@ class StormTracker:
         self._previous_rain_matrix: np.ndarray | None = None
         self._flow_estimator = FlowEstimator()
 
-    @staticmethod
-    def build_cell_mask(cell: StormCell, rain_matrix: np.ndarray) -> np.ndarray:
-        """Extrage masca 2D a celulei. Foloseste cache pentru performanta."""
-        if cell._cached_mask is not None:
-            return cell._cached_mask
-        mask = np.zeros_like(rain_matrix, dtype=np.uint8)
-        coords = np.asarray(cell.coords)
-        if len(coords) > 0:
-            mask[coords[:, 0], coords[:, 1]] = 1
-        cell._cached_mask = mask
-        return mask
+
 
     def reset(self) -> None:
         self._kinematic_updater.reset()
@@ -54,10 +44,8 @@ class StormTracker:
         # 2. Kalman predict (Constant Acceleration Model)
         self._kinematic_updater.predict_all()
 
-        # 3. Pregatim celulele (volum, intensitate, energie, masca)
+        # 3. Pregatim celulele (volum, intensitate, energie)
         self._prepare_current_cells(current_cells, rain_matrix)
-        for p_cell in self._previous_cells:
-            self.build_cell_mask(p_cell, rain_matrix)
 
         # 4. Construim matricea de asocieri folosind KD-Tree
         matches = Matcher.match_cells(
@@ -105,7 +93,7 @@ class StormTracker:
             c_cell.E = c_cell.volume / 1000.0
             c_cell.dE = 0.0
 
-            self.build_cell_mask(c_cell, rain_matrix)
+
 
     def _apply_matched_cell(self, c_cell: StormCell, tracked_cell: StormCell, best_match: StormCell) -> str:
         """Asociere existenta: preia ID-ul parintelui, actualizeaza Kalman si transfera istoricul."""
@@ -198,9 +186,9 @@ class StormTracker:
             shift_x = tracked_cell.v_x
             shift_y = tracked_cell.v_y
 
-        cached_mask = c_cell._cached_mask
-        if cached_mask is not None:
-            tracked_cell.predicted_mask = self.translate_mask(cached_mask, shift_y, shift_x)
+        coords = c_cell.coords
+        if coords is not None and len(coords) > 0:
+            tracked_cell.predicted_coords = self.translate_coords(coords, shift_y, shift_x)
 
     @staticmethod
     def _finalize_cell_trend(tracked_cell: StormCell) -> None:
@@ -218,15 +206,10 @@ class StormTracker:
         tracked_cell.size_error_percent = 100.0 * tracked_cell.size_error_pixels / max(int(c_area), 1)
 
     @staticmethod
-    def translate_mask(mask: np.ndarray, shift_y: float, shift_x: float) -> np.ndarray:
-        shifted = np.zeros_like(mask, dtype=np.uint8)
-        src_y, src_x = np.where(mask > 0)
-        dst_y = np.rint(src_y + shift_y).astype(int)
-        dst_x = np.rint(src_x + shift_x).astype(int)
-
-        valid = (
-            (dst_y >= 0) & (dst_y < mask.shape[0])
-            & (dst_x >= 0) & (dst_x < mask.shape[1])
-        )
-        shifted[dst_y[valid], dst_x[valid]] = 1
-        return shifted
+    def translate_coords(coords: np.ndarray | list, shift_y: float, shift_x: float) -> list:
+        arr = np.asarray(coords)
+        if len(arr) == 0:
+            return []
+        dst_y = np.rint(arr[:, 0] + shift_y).astype(int)
+        dst_x = np.rint(arr[:, 1] + shift_x).astype(int)
+        return list(zip(dst_y, dst_x))

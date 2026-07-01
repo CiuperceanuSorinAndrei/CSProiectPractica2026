@@ -23,6 +23,7 @@ class StormCell:
     
     # Lifecycle (Termodinamica formei)
     age_frames: int = 1
+    orphan_age: int = 0
     lifecycle_phase: str = "BIRTH"
     
     # Pozitionare si Morfologie curenta
@@ -34,6 +35,9 @@ class StormCell:
     volume: float = 0.0
     max_intensity: float = 0.0
     mean_intensity: float = 0.0
+    orientation: float = 0.0
+    major_axis_length: float = 0.0
+    minor_axis_length: float = 0.0
     coords: np.ndarray | list = field(default_factory=list)
     _cached_mask: np.ndarray | None = field(default=None, repr=False)
     
@@ -55,10 +59,15 @@ class StormCell:
     E: float = 0.0
     dE: float = 0.0
     
+    # Stare simulare Nowcast
+    cumulative_R: float = 1.0
+    flow_vec_smooth_x: float = 0.0
+    flow_vec_smooth_y: float = 0.0
+    
     # Trenduri si Predictii Avansate
     volume_trend: float = 1.0
     predicted_area_pixels: int = 0
-    predicted_mask: np.ndarray | None = field(default=None, repr=False)
+    predicted_coords: np.ndarray | list | None = field(default=None, repr=False)
     
     # Metrici de performanta (Errors)
     prediction_error_pixels: float = 0.0
@@ -75,13 +84,31 @@ class StormCell:
         """Convertire sigura in dict pentru Dash/JSON (DTO Adapter)."""
         return asdict(self)
 
+    def initialize_simulation_state(self) -> None:
+        """Initializeaza starea pentru advectia nowcast."""
+        self.cumulative_R = 1.0
+        self.flow_vec_smooth_x = self.v_x
+        self.flow_vec_smooth_y = self.v_y
+        self.predicted_centroid_x = self.centroid_x
+        self.predicted_centroid_y = self.centroid_y
+
+    def update_thermodynamics(
+        self, E_new: float, dE_new: float, R_applied: float, diag: CellDiagnostics, phase: str
+    ) -> None:
+        """Aplica modificarile din termodinamica."""
+        self.lifecycle_phase = phase
+        self.E = max(E_new, 1e-6)
+        self.dE = dE_new
+        self.cumulative_R *= R_applied
+        self.diagnostics = diag
+
     def clone(self) -> StormCell:
         """Creeaza o copie sigura si rapida, partajand matricele numpy fara deepcopy."""
         import dataclasses
         kwargs = {}
         for f in dataclasses.fields(self):
             name = f.name
-            if name in ('coords', '_cached_mask', 'predicted_mask'):
+            if name in ('coords', '_cached_mask', 'predicted_coords'):
                 # Shallow copy (reference) pentru performanta si RAM
                 kwargs[name] = getattr(self, name)
             elif name in ('centroid_history', 'area_history', 'cell_history'):

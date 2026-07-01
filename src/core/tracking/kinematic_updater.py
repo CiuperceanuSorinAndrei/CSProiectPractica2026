@@ -31,8 +31,8 @@ class KinematicUpdater:
         tracked_cell.uncertainty_trace = kf.positional_uncertainty
 
         # Consistenta cu predictia pasului 1 din AdvectionEngine
-        predicted_centroid_x = tracked_cell.centroid_x + tracked_cell.v_x + 0.5 * tracked_cell.a_x
-        predicted_centroid_y = tracked_cell.centroid_y + tracked_cell.v_y + 0.5 * tracked_cell.a_y
+        predicted_centroid_x = kf.x + kf.v_x + 0.5 * kf.a_x
+        predicted_centroid_y = kf.y + kf.v_y + 0.5 * kf.a_y
         tracked_cell.predicted_centroid_x = float(predicted_centroid_x)
         tracked_cell.predicted_centroid_y = float(predicted_centroid_y)
 

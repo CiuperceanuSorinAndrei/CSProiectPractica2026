@@ -16,16 +16,16 @@ class ReportBuilder:
     def format_metrics(session_id: str, result, session_manager: SessionManager):
         _, hist = session_manager.get_state(session_id)
 
-        hist_vol_str = f"{hist.total_volume_m3 / 1000.0:.1f} mii"
+        hist_vol_str = f"{hist.total_map_mm:.2f} L/m²"
 
-        curr_vol = result.roi_volume_m3
-        curr_vol_str = f"{curr_vol / 1000.0:.1f} mii"
+        curr_vol = result.roi_map_mm
+        curr_vol_str = f"{curr_vol:.2f} L/m²"
 
         vols = result.predicted_volumes_horizons
         pred_vol_str = (
-            f"30m: {vols.get('30m', 0)/1000.0:.0f} | "
-            f"1h: {vols.get('1h', 0)/1000.0:.0f} | "
-            f"2h: {vols.get('2h', 0)/1000.0:.0f} mii"
+            f"15m: {vols.get('15m', 0):.2f} | "
+            f"1h: {vols.get('1h', 0):.2f} | "
+            f"2h: {vols.get('2h', 0):.2f} L/m²"
         )
 
         max_rain_str = f"{result.max_rain:.1f}"
@@ -43,12 +43,12 @@ class ReportBuilder:
                 f"POD: {p:.2f} | FSS: {fs:.2f}"
             )
 
-        m_30m = _fmt("30m")
+        m_30m = _fmt("15m")
         m_1h = _fmt("1h")
         m_2h = _fmt("2h")
 
         all_csis = []
-        for h in ["30m", "1h", "2h"]:
+        for h in ["15m", "1h", "2h"]:
             all_csis.extend([m.get(h, 0) for m in hist.metrics_history["csi"] if m.get(h, 0) > 0])
         avg_csi = sum(all_csis)/len(all_csis) if all_csis else 0.0
         m_tot = f"CSI Mediu: {avg_csi:.2f}"
@@ -62,32 +62,59 @@ class ReportBuilder:
 
     @staticmethod
     def build_diagnostics(tracked_cells: list) -> html.Div:
+        import math
         rows = []
         for cell in tracked_cells:
             if cell.get("is_tracked", False):
-                err = cell.get("prediction_error_pixels", 0.0)
-                v_err = cell.get("size_error_percent", 0.0)
                 short_id = str(cell.get('cell_id', '???'))[:4]
+                
+                # Calculate speed in km/h: sqrt(vx^2 + vy^2) pixels/frame * 3 km/pixel / (15/60) h = * 12
+                vx = cell.get('v_x', 0)
+                vy = cell.get('v_y', 0)
+                speed_kmh = math.sqrt(vx**2 + vy**2) * 12
+                
+                # Calculate direction
+                if vx == 0 and vy == 0:
+                    direction = "Staționar"
+                else:
+                    angle = math.degrees(math.atan2(-vy, vx)) # -vy because image Y is down
+                    if angle < 0: angle += 360
+                    dirs = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
+                    direction = dirs[round(angle / 45) % 8]
+                
+                # Trend
+                trend = cell.get("volume_trend", 1.0)
+                if trend > 1.05:
+                    trend_str = "În Creștere 📈"
+                elif trend < 0.95:
+                    trend_str = "În Scădere 📉"
+                else:
+                    trend_str = "Stabilă ➖"
+                    
+                # Phase
+                phase = cell.get("lifecycle_phase", "MATURITY")
+                phase_map = {"FORMATION": "Formare", "MATURITY": "Maturitate", "DISSIPATION": "Disipare"}
+                phase_ro = phase_map.get(phase, phase)
+                
                 rows.append(html.Tr([
                     html.Td(short_id),
-                    html.Td(f"{err:.1f}"),
-                    html.Td(f"({cell.get('v_x', 0):.1f}, {cell.get('v_y', 0):.1f})"),
-                    html.Td(f"({cell.get('a_x', 0):.2f}, {cell.get('a_y', 0):.2f})"),
-                    html.Td(f"{v_err:.1f}%"),
+                    html.Td(f"{speed_kmh:.0f} km/h"),
+                    html.Td(direction),
+                    html.Td(phase_ro),
+                    html.Td(trend_str),
                 ]))
         if not rows:
-            return html.Div(html.I("Nu există celule urmărite în acest cadru."), className="text-muted small")
+            return html.Div(html.I("Nu există celule active în acest moment."), className="text-muted small")
         return html.Div([
-            html.H6("Diagnoză Filtru Kalman (Constant Acceleration)", className="fw-bold"),
-            # Antetul preia albastrul slider-ului, corpul griul textului din sidebar (vezi .kalman-diag in custom.css).
+            html.H6("Telemetrie Furtuni Active", className="fw-bold text-primary"),
             dbc.Table(
                 [
                     html.Thead(html.Tr([
-                        html.Th("Celulă"),
-                        html.Th("Eroare (px)"),
-                        html.Th("Viteză (x, y)"),
-                        html.Th("Accelerație (x, y)"),
-                        html.Th("Deviație Volum"),
+                        html.Th("ID Furtună"),
+                        html.Th("Viteză"),
+                        html.Th("Direcție"),
+                        html.Th("Stadiu"),
+                        html.Th("Evoluție Intensitate"),
                     ])),
                     html.Tbody(rows),
                 ],
@@ -100,7 +127,7 @@ class ReportBuilder:
     def _build_kinematic_rows(hist) -> list:
         """Randuri tabel cu mediile CSI/FAR/POD/FSS pe orizonturi (performanta cinematica)."""
         rows = []
-        for horizon in ["30m", "1h", "2h"]:
+        for horizon in ["15m", "1h", "2h"]:
             c = ReportBuilder._avg_metric(hist, "csi", horizon)
             f = ReportBuilder._avg_metric(hist, "far", horizon)
             p = ReportBuilder._avg_metric(hist, "pod", horizon)
@@ -114,11 +141,11 @@ class ReportBuilder:
 
     @staticmethod
     def _build_volume_rows(hist) -> list:
-        """Randuri tabel cu volumul real vs prezis acumulat per orizont (aliniat corect in timp)."""
+        """Randuri tabel cu MAP real vs prezis acumulat per orizont (aliniat corect in timp)."""
         vol_rows = []
-        horizon_steps = {"30m": 2, "1h": 4, "2h": 8}
+        horizon_steps = {"15m": 2, "1h": 5, "2h": 9}
 
-        for horizon in ["30m", "1h", "2h"]:
+        for horizon in ["15m", "1h", "2h"]:
             steps = horizon_steps[horizon]
 
             # Daca nu avem destule cadre pentru a alinia orizontul, trecem peste sau punem 0
@@ -128,11 +155,11 @@ class ReportBuilder:
                 # Volumul prezis este suma prezicerilor facute cu 'steps' in urma, pentru cadrele de azi
                 aligned_pred = hist.pred_volumes[horizon][:-steps]
 
-                vol_real_sum = sum(aligned_true) / 1000.0
-                vol_pred_sum = sum(aligned_pred) / 1000.0
+                vol_real_sum = sum(aligned_true)
+                vol_pred_sum = sum(aligned_pred)
             else:
-                vol_real_sum = hist.total_volume_m3 / 1000.0
-                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0) / 1000.0
+                vol_real_sum = hist.total_map_mm
+                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0)
 
             delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
 

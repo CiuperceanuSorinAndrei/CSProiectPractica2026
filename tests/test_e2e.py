@@ -55,12 +55,21 @@ def test_frame_processor_e2e_pipeline():
         
         # 4. Rulam FrameProcessor
         try:
-            result = FrameProcessor.process(prep, geom, tracker, predictions_queue)
+            from src.core.nowcast.advection_engine import AdvectionEngine
+            from src.core.nowcast.kinematic_advector import KinematicAdvector
+            from src.core.nowcast.thermodynamic_simulator import ThermodynamicSimulator
+            from src.core.nowcast.spatial_mask_builder import SpatialMaskBuilder
+            
+            engine = AdvectionEngine(
+                KinematicAdvector(), ThermodynamicSimulator(), SpatialMaskBuilder()
+            )
+            
+            result = FrameProcessor.process(prep, geom, tracker, predictions_queue, engine)
             
             # Verificam contractul (DTOs)
             assert hasattr(result, "tracked_cells")
-            assert hasattr(result, "roi_volume_m3")
-            assert hasattr(result, "predicted_roi_volume_m3")
+            assert hasattr(result, "roi_map_mm")
+            assert hasattr(result, "predicted_roi_map_mm")
             
             # La primele cadre s-ar putea sa nu avem previziuni (nevoie de history pentru v)
             if frame_idx >= 2:

@@ -37,12 +37,9 @@ def test_evaluator_area_consistency():
     roi_mask = np.ones((5, 5), dtype=bool)
     pixel_area_km2 = np.ones((5, 5)) * 10.0 # 10 km2 per pixel
     
-    # 25 pixels * 10 km2 = 250 km2
-    # conversion_factor = 250.0
-    # expected roi volume = 250 * 250 = 62500
-    
+    # 1.0 mm/h rain rate over 15 mins (0.25h) should result in 0.25 mm MAP.
     roi_vol, _, _ = Evaluator.calculate_volumes(
         rain_rate, {}, roi_mask, pixel_area_km2, horizons=[]
     )
     
-    assert np.isclose(roi_vol, 62500.0)
+    assert np.isclose(roi_vol, 0.25)

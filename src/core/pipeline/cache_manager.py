@@ -117,10 +117,10 @@ class CacheManager:
             if stop.is_set():
                 return
             if time.monotonic() - self._last_activity < _WARMUP_GRACE_S:
-                time.sleep(_WARMUP_POLL_S)
+                if stop.wait(_WARMUP_POLL_S):
+                    return
                 continue
-            if not self._execution_lock.acquire(blocking=False):
-                time.sleep(_WARMUP_POLL_S)
+            if not self._execution_lock.acquire(timeout=_WARMUP_POLL_S):
                 continue
             try:
                 if not self._warm_one(file_paths[i], geom_key, geom_args):

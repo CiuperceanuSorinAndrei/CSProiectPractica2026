@@ -11,6 +11,10 @@ import threading
 from src.core.tracking.storm_tracker import StormTracker
 from src.core.pipeline.cache_manager import CacheManager
 from src.core.pipeline.frame_processor import FrameProcessor, FrameResult
+from src.core.nowcast.advection_engine import AdvectionEngine
+from src.core.nowcast.kinematic_advector import KinematicAdvector
+from src.core.nowcast.thermodynamic_simulator import ThermodynamicSimulator
+from src.core.nowcast.spatial_mask_builder import SpatialMaskBuilder
 from config import MAX_TRACKING_DISTANCE_PX
 
 class ServerBusy(Exception):
@@ -25,6 +29,11 @@ class Orchestrator:
         self._lock = threading.Lock()
         self._predictions_queue = []
         self._cache_manager = CacheManager(self._lock)
+        self._advection_engine = AdvectionEngine(
+            KinematicAdvector(),
+            ThermodynamicSimulator(),
+            SpatialMaskBuilder()
+        )
 
     def reset_tracking(self) -> None:
         """Goleste complet starea de tracking (Kalman + coada predictii)."""
@@ -52,9 +61,15 @@ class Orchestrator:
             if prep is None or self._cache_manager.geometry is None:
                 return None
                 
-            return FrameProcessor.process(
-                prep, self._cache_manager.geometry, self._tracker, self._predictions_queue
+            result = FrameProcessor.process(
+                prep, self._cache_manager.geometry, self._tracker, self._predictions_queue, self._advection_engine
             )
+            
+            self._predictions_queue.append((result.sparse_preds, result.raw_predicted_cells))
+            if len(self._predictions_queue) > 25:
+                self._predictions_queue.pop(0)
+                
+            return result
         finally:
             self._lock.release()
 
