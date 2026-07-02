@@ -25,7 +25,7 @@ class Evaluator:
         # ponytail: Hydrological conversion from absolute m3 to Mean Areal Precipitation (MAP) in L/m2 (mm)
         area_km2 = float(np.nansum(pixel_area_km2 * frac_mask))
         if area_km2 < 1e-6:
-            area_km2 = 1.0
+            return 0.0, {}, {}
             
         rain_rate_filtered = np.where(rain_rate >= RAIN_THRESHOLD_MIN, rain_rate, 0.0)
         # MAP = average rain depth over the area in 15 mins (rain_rate * 0.25)

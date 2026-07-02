@@ -38,9 +38,6 @@ class StormTracker:
         tracked_cells: list[StormCell] = []
         active_ids: set[str] = set()
 
-        # 1. Flow a fost scos (pure Lagrangian)
-        flow = None
-
         # 2. Kalman predict (Constant Acceleration Model)
         self._kinematic_updater.predict_all()
 
@@ -63,7 +60,7 @@ class StormTracker:
                 cell_id = self._apply_new_or_split_cell(c_cell, tracked_cell)
             active_ids.add(cell_id)
 
-            self._predict_cell_mask(c_cell, tracked_cell, flow)
+            self._predict_cell_mask(c_cell, tracked_cell)
             self._finalize_cell_trend(tracked_cell)
 
             tracked_cells.append(tracked_cell)
@@ -74,7 +71,7 @@ class StormTracker:
         self._previous_cells = tracked_cells
         self._previous_rain_matrix = rain_matrix.copy()
 
-        return tracked_cells, flow
+        return tracked_cells
 
     def _prepare_current_cells(self, current_cells: list[StormCell], rain_matrix: np.ndarray) -> None:
         """Calculeaza volum, intensitate medie, energie (E) si masca pentru fiecare celula curenta."""
@@ -166,8 +163,8 @@ class StormTracker:
 
         return inherited_vx, inherited_vy
 
-    def _predict_cell_mask(self, c_cell: StormCell, tracked_cell: StormCell, flow: np.ndarray | None) -> None:
-        """Prezice masca morfologica viitoare folosind doar Kalman velocity (flow ignorant)."""
+    def _predict_cell_mask(self, c_cell: StormCell, tracked_cell: StormCell) -> None:
+        """Prezice masca morfologica viitoare folosind doar Kalman velocity."""
         shift_x = tracked_cell.v_x
         shift_y = tracked_cell.v_y
 

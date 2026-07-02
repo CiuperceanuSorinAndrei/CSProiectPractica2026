@@ -133,9 +133,9 @@ class StormMapPlotter:
                 path_effects=[patheffects.withStroke(linewidth=1.5, foreground="black")]
             )
 
-            # Contur prezis din masca
-            if "predicted_coords" in cell and cell.get("is_tracked", False):
-                StormMapPlotter._draw_predicted_contour(ax, cell["predicted_coords"], lon_grid, lat_grid, proj)
+            # Contur prezis din masca (Dezactivat la cererea utilizatorului pentru UI curat)
+            # if "predicted_coords" in cell and cell.get("is_tracked", False):
+            #     StormMapPlotter._draw_predicted_contour(ax, cell["predicted_coords"], lon_grid, lat_grid, proj)
 
             # Vector de deplasare al centroidului
             if cell.get("is_tracked", False):

@@ -43,7 +43,7 @@ class SessionManager:
     def process_to_frame(
         self, session_id: str, frame_idx: int, nc_files: list[str],
         bbox: tuple[float, float, float, float], center: tuple[float, float],
-        radius_km: float, run_mode: str, time_range: dict, store, polygon=None
+        radius_km: float, run_mode: str, time_range: dict, store, polygon=None, frame_time=None
     ):
         """Proceseaza cadru logic (acumulare/re-randare/salt) si mentine starea."""
         self._last_access[session_id] = time.time()
@@ -59,10 +59,11 @@ class SessionManager:
 
         orch, hist = self.get_state(session_id)
 
-        def run(idx):
+        def run(idx, f_time=None):
             return orch.process_frame(
                 store.path(nc_files[idx]),
-                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon
+                lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon,
+                frame_time=f_time, run_mode=run_mode
             )
 
         if is_new_dataset or frame_idx < hist.last_frame_idx:
@@ -75,7 +76,7 @@ class SessionManager:
             self._last_dataset_id[session_id] = dataset_id
             result = self._replay_from_start(run, warmup, orch, hist, frame_idx)
         elif frame_idx == hist.last_frame_idx + 1:  # cadru consecutiv
-            result = run(frame_idx)
+            result = run(frame_idx, frame_time)
             if result is None:
                 return None
             hist.accumulate(result)
@@ -85,7 +86,7 @@ class SessionManager:
             return hist.last_result
         else:  # salt inainte peste mai multe cadre
             self._accumulate_range(run, hist, max(0, hist.last_frame_idx + 1), frame_idx)
-            result = run(frame_idx)
+            result = run(frame_idx, frame_time)
             if result is None:
                 return None
             hist.accumulate(result)
@@ -107,7 +108,7 @@ class SessionManager:
         orch.reset_tracking()
         hist.reset()
         SessionManager._accumulate_range(run, hist, 0, frame_idx)
-        result = run(frame_idx)
+        result = run(frame_idx) # f_time not strictly needed for history replay
         if result is not None:
             hist.accumulate(result)
         warmup()

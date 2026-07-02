@@ -298,10 +298,16 @@ class DashboardCallbacks:
         center, polygon, zoom = self._resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom)
         bbox = self._compute_bbox(center, zoom)
 
+        from datetime import datetime as dt
+        try:
+            frame_time = dt.strptime(label, "%Y%m%d_%H%M")
+        except ValueError:
+            frame_time = None
+            
         from orchestrator import ServerBusy
         try:
             result = self.dashboard._session_manager.process_to_frame(
-                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self.dashboard._store, polygon=polygon
+                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self.dashboard._store, polygon=polygon, frame_time=frame_time
             )
         except ServerBusy:
             raise PreventUpdate

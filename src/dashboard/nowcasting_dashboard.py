@@ -56,4 +56,5 @@ class NowcastingDashboard:
 
     def run(self, debug: bool = True, port: int = 8050) -> None:
         print("Porneste serverul Dash... Deschide http://127.0.0.1:8050 in browser!")
-        self.app.run(debug=debug, port=port)
+        # Dezactivam use_reloader pentru ca descarcarea de date locale sa nu cauzeze restartarea serverului in timpul descarcarii!
+        self.app.run(debug=debug, port=port, use_reloader=False)

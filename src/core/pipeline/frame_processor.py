@@ -38,27 +38,57 @@ class FrameProcessor:
         geom: FrameGeometry, 
         tracker: StormTracker, 
         predictions_queue: list,
-        advection_engine: AdvectionEngine
+        advection_engine: AdvectionEngine,
+        frame_time=None, run_mode="historic"
     ) -> FrameResult:
         rain_rate = prep.rain_rate
         roi_mask = geom.roi_mask
 
         # Copii superficiale cu istoric profund pentru a nu muta celulele memoizate
         cells_for_tracking = [c.clone() for c in prep.filtered_cells]
-        tracked_cells, flow = tracker.track(cells_for_tracking, rain_rate)
+        tracked_cells = tracker.track(cells_for_tracking, rain_rate)
 
-        # ponytail: 15m delay calibration. Step 2 (30m from image) = 15m real-time forecast.
-        # Step 5 (1h15m from image) = 1h real-time forecast. Step 9 = 2h real-time.
-        horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
+        # Dynamic Horizons based on actual frame delay
+        import datetime, math
+        if run_mode == "live" and frame_time is not None:
+            now = datetime.datetime.utcnow()
+            # Prevent negative delay if clock is slightly off
+            delay_minutes = max(0.0, (now - frame_time).total_seconds() / 60.0)
+            
+            # Predict further ahead to compensate for delay. 
+            # E.g., if delay is 25m, we are already 25m behind.
+            # To predict 15m into the future (from NOW), we need 25+15 = 40m from the FRAME.
+            step_15m = int(math.ceil((delay_minutes + 15) / 15.0))
+            step_1h  = int(math.ceil((delay_minutes + 60) / 15.0))
+            step_2h  = int(math.ceil((delay_minutes + 120) / 15.0))
+            
+            # Ensure steps are monotonic and > 0
+            step_15m = max(1, step_15m)
+            step_1h = max(step_15m + 1, step_1h)
+            step_2h = max(step_1h + 1, step_2h)
+            
+            horizons = [(step_15m, "15m"), (step_1h, "1h"), (step_2h, "2h")]
+        else:
+            # Historic mode: static steps (assuming fixed 15m delay calibration)
+            horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
 
         sparse_preds, float_preds, predicted_cells_dict = advection_engine.extrapolate(
-            rain_rate, flow, tracked_cells, horizons
+            rain_rate, tracked_cells, horizons
         )
 
         roi_map_mm, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
             rain_rate, float_preds, roi_mask, geom.pixel_area_km2, horizons,
             getattr(geom, 'roi_mask_fractional', None)
         )
+        
+        # ---------------------------------------------------------------------
+        # PID Feedback Loop: Extragerea și aplicarea Erorii Recente
+        # ---------------------------------------------------------------------
+        advection_engine.update_feedback(
+            actual_map=roi_map_mm,
+            predicted_map=instant_predicted_volumes.get("15m", 0.0)
+        )
+        # ---------------------------------------------------------------------
 
         valid_errors = [getattr(c, "prediction_error_pixels", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
         size_errors = [getattr(c, "size_error_percent", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
@@ -68,6 +98,13 @@ class FrameProcessor:
         # V27: DTO Adapter - Convertim obiectele de domeniu în dicționare serializabile pentru Dash
         tracked_cells_dicts = [c.as_dict() for c in tracked_cells]
         
+        roi_mask = getattr(geom, 'roi_mask_fractional', None)
+        if roi_mask is not None:
+            max_rain_lm2 = float(np.max(rain_rate * (roi_mask > 0))) * 0.25
+        else:
+            max_rain_lm2 = float(np.max(rain_rate)) * 0.25
+        
+        
         return FrameResult(
             tracked_cells=tracked_cells_dicts,
             raw_tracked_cells=tracked_cells,
@@ -76,7 +113,7 @@ class FrameProcessor:
             rain_rate_masked=rain_rate_masked,
             lon_grid=geom.lon_grid,
             lat_grid=geom.lat_grid,
-            max_rain=prep.max_rain,
+            max_rain=max_rain_lm2,
             mean_centroid_error=float(np.mean(valid_errors)) if valid_errors else 0.0,
             mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
             num_tracked=len([c for c in tracked_cells if getattr(c, "is_tracked", False)]),

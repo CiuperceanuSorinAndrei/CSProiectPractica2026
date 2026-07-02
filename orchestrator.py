@@ -42,7 +42,8 @@ class Orchestrator:
         file_path: str,
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None
+        center_lat: float, center_lon: float, radius_km: float, polygon=None,
+        frame_time=None, run_mode="historic"
     ) -> FrameResult | None:
         self._cache_manager.update_activity()
         
@@ -58,7 +59,8 @@ class Orchestrator:
                 return None
                 
             result = FrameProcessor.process(
-                prep, self._cache_manager.geometry, self._tracker, self._predictions_queue, self._advection_engine
+                prep, self._cache_manager.geometry, self._tracker, self._predictions_queue, self._advection_engine,
+                frame_time=frame_time, run_mode=run_mode
             )
             
             self._predictions_queue.append((result.sparse_preds, result.raw_predicted_cells))

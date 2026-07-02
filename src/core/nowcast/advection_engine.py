@@ -16,25 +16,45 @@ class AdvectionEngine:
         kinematic_advector: KinematicAdvector,
     ) -> None:
         self.kinematic_advector = kinematic_advector
-        self._cached_grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._ema_trend: float = 1.0  # Exponential Moving Average al trendului global
+        
+        # State PID Feedback Control
+        self.dynamic_bias_correction: float = 1.0
+        self._pid_bias: float = 1.0
+        self._error_history: list[dict] = []
 
-    def _get_grids(self, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
-        if shape not in self._cached_grids:
-            self._cached_grids[shape] = np.mgrid[0:shape[0], 0:shape[1]].astype(np.float32)
-        return self._cached_grids[shape]
+    def update_feedback(self, actual_map: float, predicted_map: float) -> None:
+        """Encapsulated PID feedback update to keep AdvectionEngine state internal."""
+        self._error_history.append({
+            "actual": actual_map,
+            "predicted_15m": predicted_map
+        })
+        
+        # Keep last 5 frames for T-2 calculation
+        if len(self._error_history) > 5:
+            self._error_history.pop(0)
+            
+        if len(self._error_history) >= 3:
+            past_frame = self._error_history[-3]
+            pred_for_now = past_frame["predicted_15m"]
+            actual_now = actual_map
+            
+            if pred_for_now > 1.0 and actual_now > 1.0:
+                raw_ratio = float(np.clip(actual_now / pred_for_now, 0.7, 1.4))
+                self._pid_bias = 0.8 * self._pid_bias + 0.2 * raw_ratio
+            else:
+                self._pid_bias = 0.9 * self._pid_bias + 0.1 * 1.0
+                
+            self.dynamic_bias_correction = self._pid_bias
 
     def extrapolate(
         self,
         rain_rate: np.ndarray,
-        flow: np.ndarray | None, # pastrat in semnatura pentru compatibilitate cu apelantul
         tracked_cells: list[StormCell],
         horizons: list[tuple[int, str]],
     ) -> tuple[dict[str, sp.csr_matrix], dict[int, np.ndarray], dict[int, list[StormCell]]]:
         """Extrapoleaza precipitatiile (Hydrological Catchment Nowcasting)."""
-        grid_h, grid_w = rain_rate.shape
         rain_rate = np.nan_to_num(rain_rate, nan=0.0).astype(np.float32)
-        y_grid, x_grid = self._get_grids((grid_h, grid_w))
         
         sparse_preds = {}
         float_preds = {}
@@ -44,10 +64,6 @@ class AdvectionEngine:
         horizon_map = {h[0]: h[1] for h in horizons}
         
         valid_cells = [c for c in tracked_cells if c.is_tracked]
-        
-        map_x = x_grid.copy()
-        map_y = y_grid.copy()
-        
         simulated_cells = [c.clone() for c in valid_cells]
         
         # 1. Global Kinematics
@@ -56,9 +72,6 @@ class AdvectionEngine:
             global_vy = float(np.median([c.v_y for c in simulated_cells]))
         else:
             global_vx, global_vy = 0.0, 0.0
-            
-        flow_x = np.full((grid_h, grid_w), global_vx, dtype=np.float32)
-        flow_y = np.full((grid_h, grid_w), global_vy, dtype=np.float32)
         
         # 2. EMA-Smoothed Volume Trend
         total_volume = sum(getattr(c, 'volume', 0.0) for c in simulated_cells)
@@ -69,40 +82,61 @@ class AdvectionEngine:
             # EMA: 75% memorie, 25% semnal nou → convergență rapidă peste ~4 cadre
             self._ema_trend = 0.75 * self._ema_trend + 0.25 * raw_trend
         
-        # Clamp final pe EMA (1.12 permite corecție suficientă la orizonturi scurte)
+        # Clamp pe EMA (trendul fizic brut)
         initial_trend = float(np.clip(self._ema_trend, 0.95, 1.12))
         
+        # PID Feedback Loop: ajustam trendul fizic cu eroarea recenta a sistemului
+        # dynamic_bias_correction este calculat pe o predictie de 2 pasi (15m).
+        # Transformam factorul compus intr-unul per-pas: 1.20 compus -> ~1.10 per pas
+        per_step_correction = 1.0 + (self.dynamic_bias_correction - 1.0) / 2.0
+        corrected_trend = initial_trend * per_step_correction
+        
+        # Clamp generalizat de siguranta pe trendul final [0.90, 1.15]
+        # (1.15 compus pe 9 pasi cu decay AR-1 da un maxim de ~1.8x, absolut sigur)
+        corrected_trend = float(np.clip(corrected_trend, 0.90, 1.15))
+        
         # AR-1 Reversion to Mean cu date curate
-        current_trend = initial_trend
+        current_trend = corrected_trend
         cumulative_multiplier = 1.0
         
-        # Masa initiala a ploii (pentru conservare)
-        base_mass = float(np.sum(rain_rate))
-            
         for step in range(1, max_step + 1):
             # Actualizare multiplicator cumulativ
             cumulative_multiplier *= current_trend
             
-            # Advectie Semilagrangiana pura folosind Global Flow
-            shifted, map_x, map_y = self.kinematic_advector.advect(
-                rain_rate, map_x, map_y, x_grid, y_grid, flow_x, flow_y
+            # Advectie uniforma prin shiftare scipy
+            shift_y = step * global_vy
+            shift_x = step * global_vx
+            
+            shifted_raw = self.kinematic_advector.advect(
+                rain_rate, shift_y, shift_x
             )
             
-            # Hard-Thresholding pentru zgomotul pur de interpolare
-            hard_mask = (shifted >= RAIN_THRESHOLD_MIN).astype(np.float32)
-            shifted = shifted * hard_mask
+            # Masa aflata efectiv pe ecran (include scaderea naturala la margini)
+            mass_in_domain = float(np.sum(shifted_raw))
             
-            # 1. Conservarea Masei (reparăm scurgerea numerică cauzată de interpolare și thresholding)
-            current_mass = float(np.sum(shifted))
-            if current_mass > 0 and base_mass > 0:
-                mass_correction = base_mass / current_mass
+            # Hard-Thresholding pentru zgomotul pur de interpolare
+            hard_mask = (shifted_raw >= RAIN_THRESHOLD_MIN).astype(np.float32)
+            shifted = shifted_raw * hard_mask
+            
+            # 1. Conservarea Masei "Safe" (reparăm STRICT ploaia pe care a șters-o threshold-ul)
+            mass_after_thresh = float(np.sum(shifted))
+            if mass_after_thresh > 0 and mass_in_domain > 0:
+                # Cât la sută din ploaie a fost ștearsă de threshold?
+                mass_correction = mass_in_domain / mass_after_thresh
+                # Cap de siguranță [1.0, 1.08] (Redus de la 1.25 pt a preveni anti-disiparea)
+                mass_correction = np.clip(mass_correction, 1.0, 1.08)
                 shifted = shifted * mass_correction
             
             # 2. Aplicăm creșterea termodinamică a furtunii (EMA-AR1)
             shifted = shifted * cumulative_multiplier
             
-            # Relaxare AR-1: 30% decay per pas înapoi spre 1.0
-            current_trend = 1.0 + (current_trend - 1.0) * 0.70
+            # Relaxare AR-1 Asimetrică
+            if current_trend > 1.0:
+                # Daca furtuna crește, o limităm agresiv spre 1.0 (decay 0.70)
+                current_trend = 1.0 + (current_trend - 1.0) * 0.70
+            else:
+                # Daca furtuna moare, o lasam sa moară! (decay slab 0.95)
+                current_trend = 1.0 + (current_trend - 1.0) * 0.95
             
             float_preds[step] = shifted
             

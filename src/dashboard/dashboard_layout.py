@@ -274,9 +274,9 @@ class DashboardLayout:
                 html.H4("Volum", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
                     dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
-                    dbc.Col(self._metric_card("MAP Curent (L/m²)", "val-current-vol", "info", "info")),
-                    dbc.Col(self._metric_card("MAP Anticipat 1h (L/m²)", "val-predicted-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Rată Maximă (mm/h)", "val-max-rain", "danger", "danger")),
+                    dbc.Col(self._metric_card("Curent (L/m²)", "val-current-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Predicție Volum", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Max. ROI (L/m²)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
                 html.H4("Celule", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([

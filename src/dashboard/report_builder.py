@@ -22,13 +22,14 @@ class ReportBuilder:
         curr_vol_str = f"{curr_vol:.2f} L/m²"
 
         vols = result.predicted_volumes_horizons
-        pred_vol_str = (
-            f"15m: {vols.get('15m', 0):.2f} | "
-            f"1h: {vols.get('1h', 0):.2f} | "
-            f"2h: {vols.get('2h', 0):.2f} L/m²"
-        )
+        from dash import html
+        pred_vol_str = html.Span([
+            html.Span(f"{vols.get('15m', 0):.2f} "), html.Small("15m", className="text-muted me-2", style={"fontSize": "0.6em"}),
+            html.Span(f"{vols.get('1h', 0):.2f} "), html.Small("1h", className="text-muted me-2", style={"fontSize": "0.6em"}),
+            html.Span(f"{vols.get('2h', 0):.2f} "), html.Small("2h", className="text-muted", style={"fontSize": "0.6em"}),
+        ])
 
-        max_rain_str = f"{result.max_rain:.1f}"
+        max_rain_str = f"{result.max_rain:.2f}"
 
         tracked = f"{result.num_tracked} Active"
         in_roi = "Nu"
@@ -62,16 +63,16 @@ class ReportBuilder:
                 # Trend
                 trend = cell.get("volume_trend", 1.0)
                 if trend > 1.05:
-                    trend_str = "În Creștere 📈"
+                    trend_str = "În creștere"
                 elif trend < 0.95:
-                    trend_str = "În Scădere 📉"
+                    trend_str = "În scădere"
                 else:
-                    trend_str = "Stabilă ➖"
+                    trend_str = "Stabilă"
                     
                 # Phase
                 phase = cell.get("lifecycle_phase", "MATURITY")
-                phase_map = {"FORMATION": "Formare", "MATURITY": "Maturitate", "DISSIPATION": "Disipare"}
-                phase_ro = phase_map.get(phase, phase)
+                phase_map = {"FORMATION": "Formare", "MATURITY": "Maturitate", "DISSIPATION": "Disipare", "ACTIVE": "Activă"}
+                phase_ro = phase_map.get(phase, phase.capitalize())
                 
                 rows.append(html.Tr([
                     html.Td(short_id),
@@ -148,11 +149,12 @@ class ReportBuilder:
 
     @staticmethod
     def build_final_report(session_id: str, run_mode: str, frame_idx: int, total_frames: int, session_manager: SessionManager) -> html.Div | None:
-        if run_mode == "live" or frame_idx < total_frames - 1:
-            return None
-
         _, hist = session_manager.get_state(session_id)
         if hist.frames_processed == 0:
+            return None
+
+        # Afișăm raportul doar la final pentru HISTORIC, dar continuu pentru LIVE
+        if run_mode == "historic" and frame_idx < total_frames - 1:
             return None
 
         vol_rows = ReportBuilder._build_volume_rows(hist)
@@ -176,18 +178,21 @@ class ReportBuilder:
                     html.Td(f"± {cmae:.1f}%" if cmae > 0 else "-")
                 ]))
 
+        title_text = "Performanță Live (Statistici Cumulate)" if run_mode == "live" else "Simulare Istorică Încheiată (Hydrological Mode)"
+        alert_color = "info" if run_mode == "live" else "success"
+
         return html.Div([
             dbc.Alert(
                 [
-                    html.H4("Simulare Istorică Încheiată (Hydrological Mode)", className="alert-heading fw-bold"),
+                    html.H4(title_text, className="alert-heading fw-bold"),
                     html.P("Performanța Volumetrică la nivel de bazin:"),
                     html.Hr(),
-                    html.H6("Acumulare Precipitații Bazin (MAP)", className="fw-bold mt-3"),
+                    html.H6("Acumulare Precipitații Bazin", className="fw-bold mt-3"),
                     dbc.Table([
                         html.Thead(html.Tr([
                             html.Th("Orizont Acumulare"), 
-                            html.Th("Realizat (MAP L/m²)"), 
-                            html.Th("Prezis (MAP L/m²)"), 
+                            html.Th("Realizat (L/m²)"), 
+                            html.Th("Prezis (L/m²)"), 
                             html.Th("Volumetric Bias (MAPE %)")
                         ])),
                         html.Tbody(vol_rows)
@@ -204,6 +209,6 @@ class ReportBuilder:
                     ], bordered=True, color="dark", hover=True, size="sm", className="mb-2"),
                     html.Small("*CMAPE = Eroare Procentuală Medie pe Interval (doar când se confirmă ploaia).", className="text-muted d-block mt-1")
                 ],
-                color="success",
+                color=alert_color,
             )
         ])
