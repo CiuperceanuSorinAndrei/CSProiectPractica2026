@@ -71,6 +71,16 @@ class ReservoirLoader:
         if geom_stereo.is_empty:
             return None
 
+        # Suprafata luciului de apa: aria poligonului in CRS-ul nativ al shapefile-ului
+        # (Stereo 70, unitate metrul), deci direct in m^2. Coincide cu campul `suprafata_`
+        # (in km^2) inmultit cu 1e6, dar geometria e mereu disponibila si consistenta cu
+        # masca poligonala folosita la calculul MAP.
+        surface_area_m2 = float(geom_stereo.area)
+
+        # Volumul maxim (la Nivelul Normal de Retentie), stocat in shapefile in milioane m^3.
+        vol_mil_m3 = ReservoirLoader._safe_float(rec, "vol_mil_m3")
+        max_volume_m3 = vol_mil_m3 * 1.0e6 if vol_mil_m3 else 0.0
+
         # Transformam poligonul din metri (Stereo 70) in grade (WGS84)
         geom = transform(transformer.transform, geom_stereo)
 
@@ -86,6 +96,21 @@ class ReservoirLoader:
             "polygon": geom,
             "bounds": bounds,
             "center": (geom.centroid.y, geom.centroid.x),  # (lat, lon)
-            "radius_km": radius_km
+            "radius_km": radius_km,
+            "surface_area_m2": surface_area_m2,
+            "vol_mil_m3": vol_mil_m3,
+            "max_volume_m3": max_volume_m3,
         }
         return name, data
+
+    @staticmethod
+    def _safe_float(rec, field: str) -> float:
+        """Citeste un camp numeric dintr-un record pyshp, tolerand valori lipsa/nevalide (-> 0.0)."""
+        try:
+            value = rec[field]
+        except (KeyError, IndexError, TypeError):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0

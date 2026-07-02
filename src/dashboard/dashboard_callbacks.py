@@ -318,7 +318,8 @@ class DashboardCallbacks:
         src = self._render_map_png(result, bbox, center, radius, polygon, title)
 
         diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self.dashboard._session_manager)
+        reservoir = self._selected_reservoir(loc_type, res_select)
+        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self.dashboard._session_manager, reservoir=reservoir)
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self.dashboard._session_manager)
 
@@ -349,6 +350,15 @@ class DashboardCallbacks:
             warnings.append(dbc.Alert(f"Raza introdusă ({raw_radius} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
 
         return zoom, radius, warnings
+
+    @staticmethod
+    def _selected_reservoir(loc_type, res_select):
+        """Intrarea ReservoirLoader pentru lacul selectat (cu suprafata + volum maxim), sau None
+        cand ROI-ul nu e un lac de acumulare. Dictionarul de lacuri este memoizat, deci ieftin."""
+        if loc_type != "reservoir":
+            return None
+        from src.geo.reservoir_loader import ReservoirLoader
+        return ReservoirLoader.get_all_reservoirs().get(res_select)
 
     @staticmethod
     def _resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom):

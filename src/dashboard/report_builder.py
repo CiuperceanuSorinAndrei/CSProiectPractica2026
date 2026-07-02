@@ -2,6 +2,7 @@
 from dash import html
 import dash_bootstrap_components as dbc
 from src.dashboard.session_manager import SessionManager
+from src.geo.reservoir_fill import ReservoirFillEstimator
 
 
 class ReportBuilder:
@@ -13,7 +14,22 @@ class ReportBuilder:
         return sum(vals) / len(vals) if vals else 0.0
 
     @staticmethod
-    def format_metrics(session_id: str, result, session_manager: SessionManager):
+    def _with_fill_pct(value_str: str, map_mm: float, reservoir: dict | None):
+        """Ataseaza sub valoarea afisata (L/m²) procentul din volumul maxim al lacului.
+
+        Cand nu e selectat un lac (mod oras/cerc) sau ii lipseste capacitatea, intoarce doar
+        textul original -> cardul ramane neschimbat in acele moduri.
+        """
+        pct = ReservoirFillEstimator.fill_percentage_for(map_mm, reservoir)
+        if pct is None:
+            return value_str
+        return [
+            value_str,
+            html.Div(f"{pct:.2f}% din volum maxim", className="small text-muted fw-normal mt-1"),
+        ]
+
+    @staticmethod
+    def format_metrics(session_id: str, result, session_manager: SessionManager, reservoir: dict | None = None):
         _, hist = session_manager.get_state(session_id)
 
         hist_vol_str = f"{hist.total_map_mm:.2f} L/m²"
@@ -27,6 +43,12 @@ class ReportBuilder:
             f"1h: {vols.get('1h', 0):.2f} | "
             f"2h: {vols.get('2h', 0):.2f} L/m²"
         )
+
+        # Sub metricile de volum (L/m²) afisam procentul din volumul maxim al lacului selectat.
+        # Istoricul foloseste MAP-ul acumulat; curentul/anticipatul folosesc valoarea proprie.
+        hist_vol_str = ReportBuilder._with_fill_pct(hist_vol_str, hist.total_map_mm, reservoir)
+        curr_vol_str = ReportBuilder._with_fill_pct(curr_vol_str, curr_vol, reservoir)
+        pred_vol_str = ReportBuilder._with_fill_pct(pred_vol_str, vols.get("1h", 0.0), reservoir)
 
         max_rain_str = f"{result.max_rain:.1f}"
 
