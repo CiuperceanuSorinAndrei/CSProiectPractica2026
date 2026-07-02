@@ -4,35 +4,10 @@ from __future__ import annotations
 import numpy as np
 
 from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
-from src.core.metrics.forecast_metrics import ForecastMetrics
 
 
 class Evaluator:
-    @staticmethod
-    def calculate_global_metrics(
-        rain_rate: np.ndarray,
-        roi_mask: np.ndarray,
-        predictions_queue: list[tuple[dict, dict]],
-        horizons: list[tuple[int, str]]
-    ) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
-        """Calculeaza CSI, FAR, POD si FSS pentru orizonturile specificate."""
-        global_csi, global_far, global_pod, global_fss = {}, {}, {}, {}
-        obs_mask = (rain_rate >= RAIN_THRESHOLD_TRACKING) & roi_mask
-
-        for steps_back, name in horizons:
-            if len(predictions_queue) >= steps_back:
-                past_pred_sparse = predictions_queue[-steps_back][0].get(name)
-                if past_pred_sparse is not None:
-                    past_pred = past_pred_sparse.toarray()
-                    if past_pred.shape == rain_rate.shape:
-                        pred_mask = (past_pred >= RAIN_THRESHOLD_TRACKING) & roi_mask
-                        if np.any(obs_mask) or np.any(pred_mask):
-                            global_csi[name] = ForecastMetrics.csi(obs_mask, pred_mask)
-                            global_far[name] = ForecastMetrics.far(obs_mask, pred_mask)
-                            global_pod[name] = ForecastMetrics.pod(obs_mask, pred_mask)
-                            global_fss[name] = ForecastMetrics.fss(obs_mask, pred_mask, window_size=5)
-                            
-        return global_csi, global_far, global_pod, global_fss
+    # Funcția de calcul metrici globale a fost ștearsă (Hydrological Nowcasting Pivot)
 
     @staticmethod
     def calculate_volumes(

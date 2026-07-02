@@ -1,4 +1,4 @@
-"""Motor de advectie Hibrid (Linear Jump + Spatial Growth + Directional Blur)."""
+"""Motor de advectie Rigid (Lagrangian Persistence)."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,41 +7,35 @@ import scipy.sparse as sp
 from src.core.domain import StormCell
 from src.core.nowcast.kinematics import KinematicsEngine
 from src.core.nowcast.kinematic_advector import KinematicAdvector
-from src.core.nowcast.thermodynamic_simulator import ThermodynamicSimulator
-from src.core.nowcast.spatial_mask_builder import SpatialMaskBuilder
 
-from config import RAIN_THRESHOLD_TRACKING
+from config import RAIN_THRESHOLD_TRACKING, RAIN_THRESHOLD_MIN
 
 class AdvectionEngine:
     def __init__(
         self,
         kinematic_advector: KinematicAdvector,
-        thermodynamic_simulator: ThermodynamicSimulator,
-        spatial_mask_builder: SpatialMaskBuilder,
     ) -> None:
         self.kinematic_advector = kinematic_advector
-        self.thermodynamic_simulator = thermodynamic_simulator
-        self.spatial_mask_builder = spatial_mask_builder
+        self._cached_grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+        self._ema_trend: float = 1.0  # Exponential Moving Average al trendului global
+
+    def _get_grids(self, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+        if shape not in self._cached_grids:
+            self._cached_grids[shape] = np.mgrid[0:shape[0], 0:shape[1]].astype(np.float32)
+        return self._cached_grids[shape]
 
     def extrapolate(
         self,
         rain_rate: np.ndarray,
-        flow: np.ndarray | None,
+        flow: np.ndarray | None, # pastrat in semnatura pentru compatibilitate cu apelantul
         tracked_cells: list[StormCell],
         horizons: list[tuple[int, str]],
     ) -> tuple[dict[str, sp.csr_matrix], dict[int, np.ndarray], dict[int, list[StormCell]]]:
-        """Extrapoleaza precipitatiile folosind Advectie Liniara dintr-un singur salt."""
+        """Extrapoleaza precipitatiile (Hydrological Catchment Nowcasting)."""
         grid_h, grid_w = rain_rate.shape
         rain_rate = np.nan_to_num(rain_rate, nan=0.0).astype(np.float32)
-        y_grid, x_grid = self.spatial_mask_builder._get_grids((grid_h, grid_w))
+        y_grid, x_grid = self._get_grids((grid_h, grid_w))
         
-        if flow is None:
-            flow_x = np.zeros((grid_h, grid_w), dtype=np.float32)
-            flow_y = np.zeros((grid_h, grid_w), dtype=np.float32)
-        else:
-            flow_x = flow[:, :, 0]
-            flow_y = flow[:, :, 1]
-            
         sparse_preds = {}
         float_preds = {}
         predicted_cells_dict = {}
@@ -51,69 +45,73 @@ class AdvectionEngine:
         
         valid_cells = [c for c in tracked_cells if c.is_tracked]
         
-        # ponytail: prevent np.mean([]) NaN warning and crash if valid_cells contains NaNs
-        if valid_cells:
-            mean_tracking_error = float(np.nanmean([c.prediction_error_pixels for c in valid_cells]))
-            if np.isnan(mean_tracking_error):
-                mean_tracking_error = 0.5
-        else:
-            mean_tracking_error = 0.5
-        base_uncertainty = max(0.2, mean_tracking_error)
-        
         map_x = x_grid.copy()
         map_y = y_grid.copy()
         
-        # State pentru Reaction-Diffusion (Phase 4)
         simulated_cells = [c.clone() for c in valid_cells]
         
-        # Phase 3: Pre-allocate NumPy arrays for centroid coordinates
-        coords = np.zeros((len(simulated_cells), 2), dtype=np.float64)
-        
-        for c in simulated_cells:
-            c.initialize_simulation_state()
+        # 1. Global Kinematics
+        if simulated_cells:
+            global_vx = float(np.median([c.v_x for c in simulated_cells]))
+            global_vy = float(np.median([c.v_y for c in simulated_cells]))
+        else:
+            global_vx, global_vy = 0.0, 0.0
             
-        original_cells_dict = {c.cell_id: c for c in valid_cells}
+        flow_x = np.full((grid_h, grid_w), global_vx, dtype=np.float32)
+        flow_y = np.full((grid_h, grid_w), global_vy, dtype=np.float32)
         
+        # 2. EMA-Smoothed Volume Trend
+        total_volume = sum(getattr(c, 'volume', 0.0) for c in simulated_cells)
+        if total_volume > 0:
+            raw_trend = sum(getattr(c, 'volume', 0.0) * getattr(c, 'volume_trend', 1.0) for c in simulated_cells) / total_volume
+            # Clamp semnalul brut ÎNAINTE de EMA pentru a preveni contaminarea cu valori aberante
+            raw_trend = float(np.clip(raw_trend, 0.7, 1.5))
+            # EMA: 75% memorie, 25% semnal nou → convergență rapidă peste ~4 cadre
+            self._ema_trend = 0.75 * self._ema_trend + 0.25 * raw_trend
+        
+        # Clamp final pe EMA (1.12 permite corecție suficientă la orizonturi scurte)
+        initial_trend = float(np.clip(self._ema_trend, 0.95, 1.12))
+        
+        # AR-1 Reversion to Mean cu date curate
+        current_trend = initial_trend
+        cumulative_multiplier = 1.0
+        
+        # Masa initiala a ploii (pentru conservare)
+        base_mass = float(np.sum(rain_rate))
+            
         for step in range(1, max_step + 1):
-            # 1. Update Kinematics (Euler-Lagrange with Flow Forcing)
-            KinematicsEngine.update_positions(simulated_cells, flow, step)
-                
-            # 2. Update Reaction-Diffusion (Energetics)
-            self.thermodynamic_simulator.simulate_step(simulated_cells, coords)
+            # Actualizare multiplicator cumulativ
+            cumulative_multiplier *= current_trend
             
-            blended_flow_x, blended_flow_y = KinematicsEngine.blend_kinematics(
-                flow_x, flow_y, simulated_cells, grid_h, grid_w, x_grid, y_grid
-            )
-
-            # Phase 1: Fix Semi-Lagrangian Integration
+            # Advectie Semilagrangiana pura folosind Global Flow
             shifted, map_x, map_y = self.kinematic_advector.advect(
-                rain_rate, map_x, map_y, x_grid, y_grid, blended_flow_x, blended_flow_y
+                rain_rate, map_x, map_y, x_grid, y_grid, flow_x, flow_y
             )
             
-            growth_mask = self.spatial_mask_builder.create_spatial_growth_mask(
-                (grid_h, grid_w), simulated_cells, original_cells_dict, flow
-            )
+            # Hard-Thresholding pentru zgomotul pur de interpolare
+            hard_mask = (shifted >= RAIN_THRESHOLD_MIN).astype(np.float32)
+            shifted = shifted * hard_mask
             
-            shifted_grown = shifted * growth_mask
+            # 1. Conservarea Masei (reparăm scurgerea numerică cauzată de interpolare și thresholding)
+            current_mass = float(np.sum(shifted))
+            if current_mass > 0 and base_mass > 0:
+                mass_correction = base_mass / current_mass
+                shifted = shifted * mass_correction
             
-            # S-PROG Decay aplicat la fiecare pas pentru a permite apei sa "se evapore" (SOTA)
-            shifted_grown_sprog = self.spatial_mask_builder.apply_sprog_diffusion(
-                shifted_grown, step, valid_cells, grid_h, grid_w, base_uncertainty
-            )
+            # 2. Aplicăm creșterea termodinamică a furtunii (EMA-AR1)
+            shifted = shifted * cumulative_multiplier
             
-            # Hard-Thresholding pentru a taia alarmele false din volum
-            hard_mask = (shifted_grown_sprog >= (RAIN_THRESHOLD_TRACKING * 1.5)).astype(np.float32)
-            shifted_grown_sprog = shifted_grown_sprog * hard_mask
+            # Relaxare AR-1: 30% decay per pas înapoi spre 1.0
+            current_trend = 1.0 + (current_trend - 1.0) * 0.70
             
-            float_preds[step] = shifted_grown_sprog
+            float_preds[step] = shifted
             
-            # Phase 6: Păstrăm snapshot-ul obiectelor prezise pentru FAR Inspector
-            # Omit celulele care s-au disipat (altfel inspectorul le vede ca BAD_ADVECTION)
-            predicted_cells_dict[step] = [c.clone() for c in simulated_cells if c.lifecycle_phase != "DISSIPATION"]
+            # Pentru compatibilitatea codului (nu le mai folosim în raport)
+            predicted_cells_dict[step] = []
             
             if step in horizon_map:
                 name = horizon_map[step]
-                base_mask = (shifted_grown_sprog >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
+                base_mask = (shifted >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
                 sparse_preds[name] = sp.csr_matrix(base_mask)
             
         return sparse_preds, float_preds, predicted_cells_dict

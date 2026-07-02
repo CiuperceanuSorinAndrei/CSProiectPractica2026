@@ -18,7 +18,7 @@ class KinematicAdvector:
         
         shifted = cv2.remap(
             rain_rate, map_x_out, map_y_out, 
-            interpolation=cv2.INTER_CUBIC, 
+            interpolation=cv2.INTER_LINEAR, 
             borderMode=cv2.BORDER_CONSTANT, 
             borderValue=-1.0
         )

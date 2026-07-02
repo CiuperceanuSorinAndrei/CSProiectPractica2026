@@ -3,15 +3,6 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 import numpy as np
 
-@dataclass(frozen=True)
-class CellDiagnostics:
-    """Telemetrie fizica imuabila generata de Reaction-Diffusion engine."""
-    energy_before: float = 0.0
-    energy_after: float = 0.0
-    reaction_gain: float = 0.0
-    diffusion_delta: float = 0.0
-    relative_diffusion: float = 0.0
-    diffusion_fraction: float = 0.0
 
 @dataclass
 class StormCell:
@@ -41,26 +32,16 @@ class StormCell:
     coords: np.ndarray | list = field(default_factory=list)
     _cached_mask: np.ndarray | None = field(default=None, repr=False)
     
-    # Cinematica (Kalman 8D)
+    # Cinematica (Kalman 4D)
     v_x: float = 0.0
     v_y: float = 0.0
-    a_x: float = 0.0
-    a_y: float = 0.0
     
     # Predictii Kalman
     predicted_centroid_x: float = 0.0
     predicted_centroid_y: float = 0.0
-    predicted_area_kalman: float = 1.0
-    d_area_kalman: float = 0.0
-    dd_area_kalman: float = 0.0
     uncertainty_trace: float = 0.0
     
-    # Phase 4 Energetics (Reaction-Diffusion)
-    E: float = 0.0
-    dE: float = 0.0
-    
     # Stare simulare Nowcast
-    cumulative_R: float = 1.0
     flow_vec_smooth_x: float = 0.0
     flow_vec_smooth_y: float = 0.0
     
@@ -75,7 +56,6 @@ class StormCell:
     size_error_percent: float = 0.0
     
     # Istoric & Telemetrie
-    diagnostics: CellDiagnostics | None = field(default=None, repr=False)
     centroid_history: list[tuple[float, float]] = field(default_factory=list)
     area_history: list[int] = field(default_factory=list)
     cell_history: list[dict[str, Any]] = field(default_factory=list)
@@ -86,21 +66,10 @@ class StormCell:
 
     def initialize_simulation_state(self) -> None:
         """Initializeaza starea pentru advectia nowcast."""
-        self.cumulative_R = 1.0
         self.flow_vec_smooth_x = self.v_x
         self.flow_vec_smooth_y = self.v_y
         self.predicted_centroid_x = self.centroid_x
         self.predicted_centroid_y = self.centroid_y
-
-    def update_thermodynamics(
-        self, E_new: float, dE_new: float, R_applied: float, diag: CellDiagnostics, phase: str
-    ) -> None:
-        """Aplica modificarile din termodinamica."""
-        self.lifecycle_phase = phase
-        self.E = max(E_new, 1e-6)
-        self.dE = dE_new
-        self.cumulative_R *= R_applied
-        self.diagnostics = diag
 
     def clone(self) -> StormCell:
         """Creeaza o copie sigura si rapida, partajand matricele numpy fara deepcopy."""
@@ -115,9 +84,6 @@ class StormCell:
                 # Explicit list copy for histories to prevent mutation side-effects
                 val = getattr(self, name)
                 kwargs[name] = list(val) if val is not None else []
-            elif name == 'diagnostics':
-                # Immutables can be passed by reference
-                kwargs[name] = getattr(self, name)
             else:
                 kwargs[name] = getattr(self, name)
         return StormCell(**kwargs)

@@ -132,10 +132,6 @@ class DashboardCallbacks:
             Output("val-current-vol", "children"),
             Output("val-predicted-vol", "children"),
             Output("val-max-rain", "children"),
-            Output("val-metrics-30m", "children"),
-            Output("val-metrics-1h", "children"),
-            Output("val-metrics-2h", "children"),
-            Output("val-metrics-total", "children"),
             Output("val-tracked", "children"),
             Output("val-in-roi", "children"),
             Output("frame-label", "children"),
@@ -293,7 +289,7 @@ class DashboardCallbacks:
 
         nc_files = self.dashboard._store.filtered(tr_data, run_mode)
         if not nc_files:
-            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+            return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
                     "Fără date", None, None, False, warnings, zoom, radius, "")
 
         frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
@@ -311,19 +307,19 @@ class DashboardCallbacks:
             raise PreventUpdate
 
         if result is None:
-            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
+            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
                     f"Eroare procesare {label}", None, None, False, warnings, zoom, radius, "")
 
         title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
         src = self._render_map_png(result, bbox, center, radius, polygon, title)
 
         diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
-        hist_vol, curr_vol, pred_vol, max_rain, m_30m, m_1h, m_2h, m_tot, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self.dashboard._session_manager)
+        hist_vol, curr_vol, pred_vol, max_rain, tracked, in_roi = ReportBuilder.format_hydrological_metrics(session_id, result, self.dashboard._session_manager)
         lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self.dashboard._session_manager)
 
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
-                m_30m, m_1h, m_2h, m_tot, tracked, in_roi,
+                tracked, in_roi,
                 lbl_frame, final_report, diagnostics, False, warnings, zoom, radius, "")
 
     @staticmethod

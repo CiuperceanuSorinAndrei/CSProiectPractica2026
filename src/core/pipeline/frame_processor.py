@@ -25,10 +25,6 @@ class FrameResult:
     predicted_roi_map_mm: float
     predicted_volumes_horizons: dict[str, float]
     instant_predicted_volumes: dict[str, float]
-    global_csi: dict[str, float]
-    global_far: dict[str, float]
-    global_pod: dict[str, float]
-    global_fss: dict[str, float]
     raw_tracked_cells: list[Any] = None
     raw_predicted_cells: dict[str, list[Any]] = None
     sparse_preds: Any = None
@@ -54,9 +50,6 @@ class FrameProcessor:
         # ponytail: 15m delay calibration. Step 2 (30m from image) = 15m real-time forecast.
         # Step 5 (1h15m from image) = 1h real-time forecast. Step 9 = 2h real-time.
         horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
-        csi, far, pod, fss = Evaluator.calculate_global_metrics(
-            rain_rate, roi_mask, predictions_queue, horizons
-        )
 
         sparse_preds, float_preds, predicted_cells_dict = advection_engine.extrapolate(
             rain_rate, flow, tracked_cells, horizons
@@ -91,9 +84,5 @@ class FrameProcessor:
             predicted_roi_map_mm=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,
             instant_predicted_volumes=instant_predicted_volumes,
-            global_csi=csi,
-            global_far=far,
-            global_pod=pod,
-            global_fss=fss,
             sparse_preds=sparse_preds,
         )

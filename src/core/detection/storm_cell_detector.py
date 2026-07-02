@@ -98,7 +98,7 @@ class StormCellDetector:
             if max_area is not None and cell_pixels > max_area:
                 continue
                 
-            y_center, x_center = prop.centroid_weighted
+            y_center, x_center = prop.centroid
             global_coords = prop.coords
             
             cells.append(StormCell(

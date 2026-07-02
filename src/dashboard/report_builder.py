@@ -13,7 +13,7 @@ class ReportBuilder:
         return sum(vals) / len(vals) if vals else 0.0
 
     @staticmethod
-    def format_metrics(session_id: str, result, session_manager: SessionManager):
+    def format_hydrological_metrics(session_id: str, result, session_manager: SessionManager):
         _, hist = session_manager.get_state(session_id)
 
         hist_vol_str = f"{hist.total_map_mm:.2f} L/m²"
@@ -30,35 +30,12 @@ class ReportBuilder:
 
         max_rain_str = f"{result.max_rain:.1f}"
 
-        def _fmt(horizon):
-            c = ReportBuilder._avg_metric(hist, "csi", horizon)
-            f = ReportBuilder._avg_metric(hist, "far", horizon)
-            if c == 0.0 and f == 0.0:
-                return "Așteptare..."
-
-            p = ReportBuilder._avg_metric(hist, "pod", horizon)
-            fs = ReportBuilder._avg_metric(hist, "fss", horizon)
-            return (
-                f"CSI: {c:.2f} | FAR: {f:.2f}\n"
-                f"POD: {p:.2f} | FSS: {fs:.2f}"
-            )
-
-        m_30m = _fmt("15m")
-        m_1h = _fmt("1h")
-        m_2h = _fmt("2h")
-
-        all_csis = []
-        for h in ["15m", "1h", "2h"]:
-            all_csis.extend([m.get(h, 0) for m in hist.metrics_history["csi"] if m.get(h, 0) > 0])
-        avg_csi = sum(all_csis)/len(all_csis) if all_csis else 0.0
-        m_tot = f"CSI Mediu: {avg_csi:.2f}"
-
         tracked = f"{result.num_tracked} Active"
         in_roi = "Nu"
         if curr_vol > 0:
             in_roi = "Da (Ploaie detectată)"
 
-        return hist_vol_str, curr_vol_str, pred_vol_str, max_rain_str, m_30m, m_1h, m_2h, m_tot, tracked, in_roi
+        return hist_vol_str, curr_vol_str, pred_vol_str, max_rain_str, tracked, in_roi
 
     @staticmethod
     def build_diagnostics(tracked_cells: list) -> html.Div:
@@ -141,7 +118,7 @@ class ReportBuilder:
 
     @staticmethod
     def _build_volume_rows(hist) -> list:
-        """Randuri tabel cu MAP real vs prezis acumulat per orizont (aliniat corect in timp)."""
+        """Randuri tabel cu MAP (L/m²) real vs prezis acumulat per orizont (aliniat corect in timp)."""
         vol_rows = []
         horizon_steps = {"15m": 2, "1h": 5, "2h": 9}
 
@@ -164,8 +141,8 @@ class ReportBuilder:
             delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
 
             vol_rows.append(html.Tr([
-                html.Td(horizon), html.Td(f"{vol_real_sum:.0f}"),
-                html.Td(f"{vol_pred_sum:.0f}"), html.Td(f"{delta_pct:+.1f}%")
+                html.Td(horizon), html.Td(f"{vol_real_sum:.2f} L/m²"),
+                html.Td(f"{vol_pred_sum:.2f} L/m²"), html.Td(f"{delta_pct:+.1f}%")
             ]))
         return vol_rows
 
@@ -178,31 +155,54 @@ class ReportBuilder:
         if hist.frames_processed == 0:
             return None
 
-        rows = ReportBuilder._build_kinematic_rows(hist)
         vol_rows = ReportBuilder._build_volume_rows(hist)
 
-        # Phase 6: Run the FAR Inspector at the very end of the simulation
-        hist.generate_far_report()
+        # Măsurăm fiabilitatea (Multi-Thresholds)
+        reliability = hist.get_reliability_metrics()
+        rel_rows = []
+        for t, metrics in reliability.items():
+            # Pentru fiecare prag, afisam o linie speciala de antet
+            rel_rows.append(html.Tr([
+                html.Td(f"Acumulare > {t} L/m²", colSpan=4, className="fw-bold bg-secondary text-light text-center")
+            ]))
+            for horizon in ["15m", "1h", "2h"]:
+                pod = metrics[horizon]["pod"]
+                far = metrics[horizon]["far"]
+                cmae = metrics[horizon]["cmae"]
+                rel_rows.append(html.Tr([
+                    html.Td(horizon),
+                    html.Td(f"{pod:.0f}%" if pod > 0 else "0%"),
+                    html.Td(f"{far:.0f}%" if far > 0 else "0%"),
+                    html.Td(f"± {cmae:.1f}%" if cmae > 0 else "-")
+                ]))
 
         return html.Div([
             dbc.Alert(
                 [
-                    html.H4("Simulare Istorică Încheiată", className="alert-heading fw-bold"),
-                    html.P("Raport agregat de performanță la finalul episodului selectat:"),
+                    html.H4("Simulare Istorică Încheiată (Hydrological Mode)", className="alert-heading fw-bold"),
+                    html.P("Performanța Volumetrică la nivel de bazin:"),
                     html.Hr(),
-                    html.H6("Acuratețe Volumetrică", className="fw-bold mt-3"),
+                    html.H6("Acumulare Precipitații Bazin (MAP)", className="fw-bold mt-3"),
                     dbc.Table([
-                        html.Thead(html.Tr([html.Th("Orizont"), html.Th("Volum Real (mii m³)"), html.Th("Volum Prezis (mii m³)"), html.Th("Eroare (Delta %)")])),
+                        html.Thead(html.Tr([
+                            html.Th("Orizont Acumulare"), 
+                            html.Th("Realizat (MAP L/m²)"), 
+                            html.Th("Prezis (MAP L/m²)"), 
+                            html.Th("Volumetric Bias (MAPE %)")
+                        ])),
                         html.Tbody(vol_rows)
                     ], bordered=True, color="dark", hover=True, size="sm", className="mb-4"),
-                    html.H6("Performanță Cinematică (Medii)", className="fw-bold"),
-                    dbc.Table(
-                        [
-                            html.Thead(html.Tr([html.Th("Orizont"), html.Th("CSI"), html.Th("FAR"), html.Th("POD"), html.Th("FSS")])),
-                            html.Tbody(rows)
-                        ],
-                        bordered=True, color="dark", hover=True, size="sm"
-                    )
+                    html.H6("Încredere Avertizări Bazin (Acuratețe Volum Cumulat)", className="fw-bold mt-3"),
+                    dbc.Table([
+                        html.Thead(html.Tr([
+                            html.Th("Orizont"), 
+                            html.Th("Succes (POD)"), 
+                            html.Th("Alarme False (FAR)"),
+                            html.Th("Eroare (CMAPE)")
+                        ])),
+                        html.Tbody(rel_rows)
+                    ], bordered=True, color="dark", hover=True, size="sm", className="mb-2"),
+                    html.Small("*CMAPE = Eroare Procentuală Medie pe Interval (doar când se confirmă ploaia).", className="text-muted d-block mt-1")
                 ],
                 color="success",
             )

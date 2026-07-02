@@ -13,8 +13,6 @@ from src.core.pipeline.cache_manager import CacheManager
 from src.core.pipeline.frame_processor import FrameProcessor, FrameResult
 from src.core.nowcast.advection_engine import AdvectionEngine
 from src.core.nowcast.kinematic_advector import KinematicAdvector
-from src.core.nowcast.thermodynamic_simulator import ThermodynamicSimulator
-from src.core.nowcast.spatial_mask_builder import SpatialMaskBuilder
 from config import MAX_TRACKING_DISTANCE_PX
 
 class ServerBusy(Exception):
@@ -30,9 +28,7 @@ class Orchestrator:
         self._predictions_queue = []
         self._cache_manager = CacheManager(self._lock)
         self._advection_engine = AdvectionEngine(
-            KinematicAdvector(),
-            ThermodynamicSimulator(),
-            SpatialMaskBuilder()
+            KinematicAdvector()
         )
 
     def reset_tracking(self) -> None:

@@ -1,7 +1,3 @@
-import numpy as np
-
-from src.diagnostics.false_alarm_inspector import FalseAlarmInspector
-
 class FrameHistory:
     """Acumuleaza volumul total si seriile de metrici globale (modul istoric)."""
 
@@ -16,24 +12,23 @@ class FrameHistory:
         
         # Stocam istoricul valorilor instantanee
         self.true_volumes = []
-        self.pred_volumes = {"15m": [], "1h": [], "2h": []}
         
         # Volum acumulat estimat pe mai multe orizonturi (legacy, pentru afisare rapida)
         self.predicted_volume_accumulation = {"15m": 0.0, "1h": 0.0, "2h": 0.0}
         
-        # Metric history (CSI, FAR, POD, FSS)
-        self.metrics_history = {
-            "csi": [],
-            "far": [],
-            "pod": [],
-            "fss": []
-        }
+        # Stocăm valorile cumulate prezise și instantanee
+        self.pred_volumes_acc = {"15m": [], "1h": [], "2h": []}
+        self.pred_volumes = {"15m": [], "1h": [], "2h": []}
         
-        # Phase 6: FAR Inspector data
-        # list of (frame_idx, horizon_name, predicted_cells, observed_cells)
-        self.far_episode_data = []
-        self.far_episode_data_raw = []
-        self.far_inspector = FalseAlarmInspector(area_conservation_tolerance=0.20)
+        # Event Reliability (Catchment level: Thresholds 0.1 L/m2 si 1.0 L/m2 CUMULAT)
+        self.thresholds = [0.1, 1.0]
+        self.reliability_counts = {}
+        for t in self.thresholds:
+            self.reliability_counts[t] = {
+                "15m": {"hits": 0, "fa": 0, "miss": 0, "cr": 0, "abs_err_sum": 0.0},
+                "1h": {"hits": 0, "fa": 0, "miss": 0, "cr": 0, "abs_err_sum": 0.0},
+                "2h": {"hits": 0, "fa": 0, "miss": 0, "cr": 0, "abs_err_sum": 0.0}
+            }
 
     def accumulate(self, result) -> None:
         self.total_map_mm += result.roi_map_mm
@@ -42,42 +37,64 @@ class FrameHistory:
         
         self.true_volumes.append(result.roi_map_mm)
         
+        # Salvăm predicțiile cumulate (ce cantitate de apă se așteaptă să cadă PÂNĂ LA acel orizont)
+        if hasattr(result, "predicted_volumes_horizons") and result.predicted_volumes_horizons:
+            for horizon in ["15m", "1h", "2h"]:
+                val = result.predicted_volumes_horizons.get(horizon, 0.0)
+                self.pred_volumes_acc[horizon].append(val)
+                
+        # Salvăm predicțiile instantanee
         if hasattr(result, "instant_predicted_volumes") and result.instant_predicted_volumes:
             for horizon in ["15m", "1h", "2h"]:
                 val = result.instant_predicted_volumes.get(horizon, 0.0)
                 self.predicted_volume_accumulation[horizon] += val
                 self.pred_volumes[horizon].append(val)
                 
-        # Adaugam metricile pentru a putea face mediile
-        if result.global_csi:
-            self.metrics_history["csi"].append(result.global_csi.copy())
-            self.metrics_history["far"].append(result.global_far.copy())
-            self.metrics_history["pod"].append(result.global_pod.copy())
-            self.metrics_history["fss"].append(result.global_fss.copy())
-
-        # Phase 6: Adaugam observatiile pentru tracker history
-        if result.raw_tracked_cells:
-            self.far_inspector.collect_observations(self.frames_processed, result.raw_tracked_cells)
-            
-        # Adaugam perechile de predicții (din trecut) și observații curente
-        # Horizons are 2 (30m), 4 (1h), 8 (2h)
-        # ponytail: 15m delay calibration
-        horizons_map = {2: "15m", 5: "1h", 9: "2h"}
+        # Calculăm Catchment Event Reliability on the fly folosind Ferestre Cumulate
+        # IMPORTANT: Valorile trebuie să fie IDENTICE cu target_step din frame_processor.py horizons
+        horizon_steps = {"15m": 2, "1h": 5, "2h": 9}
         
-        for steps_back, h_name in horizons_map.items():
-            # If we have enough history, the prediction from `frames_processed - steps_back` is validating NOW
-            if len(self.far_episode_data_raw) >= steps_back:
-                past_result = self.far_episode_data_raw[-steps_back]
-                if past_result and past_result.raw_predicted_cells:
-                    # advection_engine indexes predicted_cells_dict by integer step
-                    past_preds = past_result.raw_predicted_cells.get(steps_back, [])
-                    curr_obs = result.raw_tracked_cells or []
-                    self.far_episode_data.append((self.frames_processed, h_name, past_preds, curr_obs))
+        for horizon, steps in horizon_steps.items():
+            if len(self.true_volumes) > steps:
+                # Realitatea cumulată (ex: suma ploilor din ultimul 1h)
+                # Extragem ultimele 'steps' elemente și facem suma
+                actual_acc_val = sum(self.true_volumes[-steps:])
+                
+                # Predicția făcută acum 'steps' cadre în urmă referitoare la cantitatea CUMULATĂ pe parcursul celor 'steps' cadre
+                pred_acc_val = self.pred_volumes_acc[horizon][-1 - steps]
+                
+                for t in self.thresholds:
+                    pred_event = pred_acc_val >= t
+                    actual_event = actual_acc_val >= t
                     
-        self.far_episode_data_raw.append(result)
+                    counts = self.reliability_counts[t][horizon]
+                    if pred_event and actual_event:
+                        counts["hits"] += 1
+                        # Eroarea cantitativă procentuală simetrică pe interval (sMAPE)
+                        denominator = pred_acc_val + actual_acc_val
+                        if denominator > 0:
+                            counts["abs_err_sum"] += 2.0 * abs(pred_acc_val - actual_acc_val) / denominator * 100.0
+                    elif pred_event and not actual_event:
+                        counts["fa"] += 1
+                    elif not pred_event and actual_event:
+                        counts["miss"] += 1
+                    else:
+                        counts["cr"] += 1
 
-    def generate_far_report(self):
-        """Called at the end of the historical simulation to run Hungarian matching and print the report."""
-        if self.far_episode_data:
-            self.far_inspector.evaluate_episode(self.far_episode_data)
-            self.far_inspector.generate_report()
+    def get_reliability_metrics(self) -> dict[float, dict[str, dict[str, float]]]:
+        """Returneaza POD, FAR si CMAE la nivel de bazin pentru fiecare prag si orizont."""
+        metrics = {}
+        for t in self.thresholds:
+            metrics[t] = {}
+            for horizon, counts in self.reliability_counts[t].items():
+                hits = counts["hits"]
+                fa = counts["fa"]
+                miss = counts["miss"]
+                abs_err = counts["abs_err_sum"]
+                
+                pod = hits / (hits + miss) if (hits + miss) > 0 else 0.0
+                far = fa / (hits + fa) if (hits + fa) > 0 else 0.0
+                cmae = abs_err / hits if hits > 0 else 0.0
+                
+                metrics[t][horizon] = {"pod": pod * 100.0, "far": far * 100.0, "cmae": cmae}
+        return metrics

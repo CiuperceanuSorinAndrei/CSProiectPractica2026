@@ -11,6 +11,5 @@ Sub-pachete:
 """
 from .detection.storm_cell_detector import StormCellDetector
 from .tracking.storm_tracker import StormTracker
-from .metrics.forecast_metrics import ForecastMetrics
 
-__all__ = ["StormCellDetector", "StormTracker", "ForecastMetrics"]
+__all__ = ["StormCellDetector", "StormTracker"]

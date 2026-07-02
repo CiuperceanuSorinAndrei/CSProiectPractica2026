@@ -6,7 +6,7 @@ import uuid
 import numpy as np
 
 from src.core.tracking.matcher import Matcher
-from src.core.tracking.flow_estimator import FlowEstimator
+
 from src.core.domain import StormCell
 from src.core.tracking.kinematic_updater import KinematicUpdater
 from src.core.tracking.cell_lifecycle import CellLifecycleManager
@@ -22,7 +22,7 @@ class StormTracker:
         self._kinematic_updater = KinematicUpdater()
         self._previous_cells: list[StormCell] = []
         self._previous_rain_matrix: np.ndarray | None = None
-        self._flow_estimator = FlowEstimator()
+
 
 
 
@@ -38,8 +38,8 @@ class StormTracker:
         tracked_cells: list[StormCell] = []
         active_ids: set[str] = set()
 
-        # 1. Optical flow global (DIS)
-        flow = self._flow_estimator.compute(self._previous_rain_matrix, rain_matrix)
+        # 1. Flow a fost scos (pure Lagrangian)
+        flow = None
 
         # 2. Kalman predict (Constant Acceleration Model)
         self._kinematic_updater.predict_all()
@@ -138,15 +138,10 @@ class StormTracker:
         kf_current = self._kinematic_updater.get_filter(cell_id)
         tracked_cell.v_x = kf_current.v_x
         tracked_cell.v_y = kf_current.v_y
-        tracked_cell.a_x = kf_current.a_x
-        tracked_cell.a_y = kf_current.a_y
-        tracked_cell.predicted_area_kalman = max(1.0, kf_current.area)
-        tracked_cell.d_area_kalman = kf_current.d_area
-        tracked_cell.dd_area_kalman = kf_current.dd_area
         tracked_cell.uncertainty_trace = kf_current.positional_uncertainty
 
-        tracked_cell.predicted_centroid_x = float(tracked_cell.centroid_x + tracked_cell.v_x + 0.5 * tracked_cell.a_x)
-        tracked_cell.predicted_centroid_y = float(tracked_cell.centroid_y + tracked_cell.v_y + 0.5 * tracked_cell.a_y)
+        tracked_cell.predicted_centroid_x = float(tracked_cell.centroid_x + tracked_cell.v_x)
+        tracked_cell.predicted_centroid_y = float(tracked_cell.centroid_y + tracked_cell.v_y)
         return cell_id
 
     def _inherit_parent_velocity(self, c_cell: StormCell) -> tuple[float, float]:
@@ -172,19 +167,9 @@ class StormTracker:
         return inherited_vx, inherited_vy
 
     def _predict_cell_mask(self, c_cell: StormCell, tracked_cell: StormCell, flow: np.ndarray | None) -> None:
-        """Prezice masca morfologica viitoare prin blend adaptiv intre Kalman si optical flow."""
-        coords = c_cell.coords
-        if flow is not None and coords is not None and len(coords) > 0:
-            mean_flow_y = float(np.mean(flow[coords[:, 0], coords[:, 1], 1]))
-            mean_flow_x = float(np.mean(flow[coords[:, 0], coords[:, 1], 0]))
-
-            # Adaptive Kinematic Weighting
-            confidence = np.clip(10.0 / (10.0 + tracked_cell.uncertainty_trace), 0.1, 0.9)
-            shift_x = confidence * tracked_cell.v_x + (1.0 - confidence) * mean_flow_x
-            shift_y = confidence * tracked_cell.v_y + (1.0 - confidence) * mean_flow_y
-        else:
-            shift_x = tracked_cell.v_x
-            shift_y = tracked_cell.v_y
+        """Prezice masca morfologica viitoare folosind doar Kalman velocity (flow ignorant)."""
+        shift_x = tracked_cell.v_x
+        shift_y = tracked_cell.v_y
 
         coords = c_cell.coords
         if coords is not None and len(coords) > 0:
@@ -192,15 +177,19 @@ class StormTracker:
 
     @staticmethod
     def _finalize_cell_trend(tracked_cell: StormCell) -> None:
-        """Calculeaza trendul de arie, faza de viata (Phase 4) si eroarea de dimensiune prezisa."""
+        """Calculeaza trendul de arie, faza de viata (Phase 4) si eroarea de dimensiune prezisa.
+        
+        IMPORTANT: volume_trend (calculat din raportul volumelor reale) NU este suprascris.
+        area_trend (calculat din istoria ariei in pixeli) este folosit doar pentru predicted_area_pixels.
+        """
         c_area = tracked_cell.area_pixels
 
-        trend = CellLifecycleManager.compute_area_trend(tracked_cell)
-        tracked_cell.volume_trend = trend
+        # Area trend - folosit DOAR pentru predictia morfologica (marimea celulei)
+        area_trend = CellLifecycleManager.compute_area_trend(tracked_cell)
 
         tracked_cell.lifecycle_phase = lifecycle(tracked_cell.E, tracked_cell.dE)
 
-        predicted_area_pixels = int(round(max(c_area, 1.0) * trend))
+        predicted_area_pixels = int(round(max(c_area, 1.0) * area_trend))
         tracked_cell.predicted_area_pixels = predicted_area_pixels
         tracked_cell.size_error_pixels = abs(predicted_area_pixels - int(c_area))
         tracked_cell.size_error_percent = 100.0 * tracked_cell.size_error_pixels / max(int(c_area), 1)
