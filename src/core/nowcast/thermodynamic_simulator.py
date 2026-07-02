@@ -12,16 +12,17 @@ class ThermodynamicSimulator:
             coords[idx_c, 1] = c.predicted_centroid_y
             
         if len(coords) > 1:
-            # ponytail: pure NumPy vectorization avoids SciPy overhead and memory bottlenecks
-            diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-            dist_matrix = np.sqrt(np.sum(diff**2, axis=-1))
+            from scipy.spatial import cKDTree
+            tree = cKDTree(coords)
+            all_neighbors = tree.query_ball_point(coords, r=50.0)
         else:
-            dist_matrix = np.zeros((1, 1))
+            all_neighbors = [[]]
         
         updates = []
         for i, c in enumerate(simulated_cells):
             if len(coords) > 1:
-                neighbor_indices = np.where((dist_matrix[i] < 50.0) & (dist_matrix[i] > 0))[0]
+                # Excludem celula curenta
+                neighbor_indices = [idx for idx in all_neighbors[i] if idx != i]
                 neighbors_E = np.array([simulated_cells[j].E for j in neighbor_indices])
             else:
                 neighbors_E = np.array([])

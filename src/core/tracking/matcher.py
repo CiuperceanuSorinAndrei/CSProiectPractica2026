@@ -32,8 +32,9 @@ class Matcher:
             return 0.0
             
         # ponytail: 1D hash intersection is mathematically identical to exact pixel IOU but 50x faster
-        hash_a = arr_a[:, 0] * 10000 + arr_a[:, 1]
-        hash_b = arr_b[:, 0] * 10000 + arr_b[:, 1]
+        # FIXED: Offset added to prevent negative coord collisions, and multiplier increased to 100000
+        hash_a = (arr_a[:, 0] + 10000) * 100000 + (arr_a[:, 1] + 10000)
+        hash_b = (arr_b[:, 0] + 10000) * 100000 + (arr_b[:, 1] + 10000)
         intersection = len(np.intersect1d(hash_a, hash_b, assume_unique=True))
         
         if intersection == 0:
@@ -133,6 +134,15 @@ class Matcher:
                 iou_penalty = 1.0 - iou
 
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
+                
+                # Phase 3: Trajectory Filtering (Velocity Constraint)
+                # Dacă deviația față de predicția de mișcare (dist) este prea mare,
+                # asumpția e că am "agățat" un zgomot radar spontan care va genera FAR.
+                if dist > max_dist_pixels * 1.5:
+                    hybrid_cost = 1000.0
+                elif hybrid_cost >= 2.5:
+                    hybrid_cost = 1000.0
+
                 if hybrid_cost < 500.0:
                     edges.append((i, j, hybrid_cost))
 

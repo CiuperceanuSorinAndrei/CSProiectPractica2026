@@ -49,9 +49,11 @@ class KinematicsEngine:
                 a_flow_x = (c.flow_vec_smooth_x - c.v_x) * flow_coupling
                 a_flow_y = (c.flow_vec_smooth_y - c.v_y) * flow_coupling
                 
-                # Viteza combina inertia, curgerea (flow) si acceleratia curbata Kalman (amortizata)
-                c.v_x += a_flow_x + c.a_x * (0.85 ** step)
-                c.v_y += a_flow_y + c.a_y * (0.85 ** step)
+                # Viteza se adapteaza strict pe baza curgerii (flow), eliminand acceleratia
+                # Kalman din bucla de integrare pentru a preveni "runaway velocity" (FAR 0.57).
+                # State-ul Kalman si-a integrat deja acceleratia in predictia initiala.
+                c.v_x += a_flow_x
+                c.v_y += a_flow_y
             
             # Integratorul (viteză -> poziție)
             c.predicted_centroid_x += c.v_x

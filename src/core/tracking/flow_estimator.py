@@ -38,27 +38,30 @@ class FlowEstimator:
             dbz_norm = np.clip(dbz, 0.0, 60.0) * (255.0 / 60.0)
             return dbz_norm.astype(np.uint8)
             
-        prev_img = rain_to_uint8(previous_rain)
-        curr_img = rain_to_uint8(current_rain)
+        h, w = previous_rain.shape
         
-        h, w = prev_img.shape
+        # Facem downscale IN DOMENIU LINIAR pentru a prinde miscarile largi
+        # Fara sa nivelam varfurile fizice de precipitatii (rezolva problema orbirii)
+        prev_small_lin = cv2.resize(previous_rain, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+        curr_small_lin = cv2.resize(current_rain, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
         
-        # Facem downscale pentru a prinde miscarile largi (large displacements)
-        # Mai rapid si mai robust
-        prev_small = cv2.resize(prev_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
-        curr_small = cv2.resize(curr_img, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+        prev_small = rain_to_uint8(prev_small_lin)
+        curr_small = rain_to_uint8(curr_small_lin)
         
         # DIS Optical Flow (foarte stabil)
         flow_small = self._dis.calc(prev_small, curr_small, None)
         
+        # Aplicam blur pe varianta small (de 4x mai rapid) si evitam ca aerul senin
+        # (vector=0) sa incetineasca furtuna din cauza blur-ului.
+        flow_blur_x = cv2.GaussianBlur(flow_small[:, :, 0], (15, 15), 0)
+        flow_blur_y = cv2.GaussianBlur(flow_small[:, :, 1], (15, 15), 0)
+        
+        mask = (curr_small_lin > 0.1).astype(np.float32)
+        flow_small[:, :, 0] = flow_blur_x * mask + flow_small[:, :, 0] * (1.0 - mask)
+        flow_small[:, :, 1] = flow_blur_y * mask + flow_small[:, :, 1] * (1.0 - mask)
+        
         # Upscale inapoi la rezolutia originala
         flow_full = cv2.resize(flow_small, (w, h), interpolation=cv2.INTER_LINEAR)
-        
-        # V25: Eliminare Global Steering Wind (care distrugea complet rotatiile si flow-ul).
-        # În loc de medierea globală care anulează DIS, folosim un filtru Gaussian puternic
-        # pentru date float32. Astfel păstrăm direcțiile maselor de aer.
-        flow_full[:, :, 0] = cv2.GaussianBlur(flow_full[:, :, 0], (15, 15), 0)
-        flow_full[:, :, 1] = cv2.GaussianBlur(flow_full[:, :, 1], (15, 15), 0)
         
         # Inmultim cu 2 deoarece am facut downscale cu factor de 0.5 (x2 la pixel movement)
         return flow_full * 2.0

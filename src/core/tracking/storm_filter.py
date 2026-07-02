@@ -105,9 +105,10 @@ class StormFilter:
                 for j in range(3):
                     Q[indices[i], indices[j]] = q[i, j]
 
-        # ponytail: dramatically reduced process noise to prevent uncertainty trace from exploding during 120-step predict-only phases (which caused massive FAR umbrellas)
-        add_singer_q_block([0, 2, 4], 0.005)
-        add_singer_q_block([1, 3, 5], 0.005)
+        # Restore analytical Singer Process Noise block for dynamic flexibility.
+        # Rigid trajectories (Q=0.005) sheared storms apart when forced to blend with Optical Flow.
+        add_singer_q_block([0, 2, 4], 2.0)
+        add_singer_q_block([1, 3, 5], 2.0)
         add_singer_q_block([6, 7, 8], 0.001)  # log-space area noise
         return Q
 
@@ -123,6 +124,13 @@ class StormFilter:
     def predict(self) -> None:
         self._kf.predict()
         self._kf.x[6, 0] = np.clip(self._kf.x[6, 0], -5.0, 20.0)
+        # Limit uncertainty trace explicitly so we can use a high Q without explosion
+        # during 120-step predict-only horizons.
+        try:
+            eigval, eigvec = np.linalg.eigh(self._kf.P)
+            self._kf.P = (eigvec * np.clip(eigval, 1e-8, 50.0)) @ eigvec.T
+        except np.linalg.LinAlgError:
+            pass
 
     def update(self, observed_x: float, observed_y: float, observed_area: float) -> None:
         obs_z = np.array([[observed_x], [observed_y], [np.log(max(observed_area, 1.0))]])

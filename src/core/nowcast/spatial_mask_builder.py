@@ -45,8 +45,8 @@ class SpatialMaskBuilder:
                     f_mag = np.hypot(f_x, f_y)
                     if f_mag > 0.1:
                         cos_sim = (c.v_x * f_x + c.v_y * f_y) / (v_mag * f_mag)
-                        # Permitem weight > 1.0 pentru aliniere perfecta (pana la 1.2) pentru recuperare volum
-                        alignment_weight = max(0.5, 0.7 + 0.5 * cos_sim)
+                        # Permitem maxim 1.0 pentru aliniere perfecta (plafonat pentru a preveni explozia 59.2%)
+                        alignment_weight = min(1.0, max(0.5, 0.7 + 0.5 * cos_sim))
                         cumulative_factor *= alignment_weight
             
             cumulative_factor = np.clip(cumulative_factor, 0.2, 3.0)
@@ -62,6 +62,8 @@ class SpatialMaskBuilder:
                 area_factor = min(np.sqrt(cumulative_factor), 1.5)  # ponytail: cap spatial expansion to prevent quadratic volume explosion
                 sigma_x *= area_factor
                 sigma_y *= area_factor
+            else:
+                area_factor = 1.0
             
             radius = max(5.0, max(sigma_x, sigma_y))
             
@@ -90,6 +92,8 @@ class SpatialMaskBuilder:
             local_multiplier = 1.0 + (cumulative_factor - 1.0) * halo
             
             if cumulative_factor >= 1.0:
+                # Conservarea masei: Daca marim norul (area_factor > 1), scadem intensitatea precipitațiilor
+                local_multiplier /= (area_factor ** 2)
                 growth_mask[y_slice, x_slice] = np.maximum(growth_mask[y_slice, x_slice], local_multiplier)
             else:
                 decay_mask[y_slice, x_slice] = np.minimum(decay_mask[y_slice, x_slice], local_multiplier)
@@ -107,52 +111,65 @@ class SpatialMaskBuilder:
         grid_w: int, 
         base_uncertainty: float
     ) -> np.ndarray:
-        """Aplica Morphological Dilation S-PROG pentru a acoperi eroarea de advectie."""
+        """Aplica S-PROG Autoregressive Scale-Dependent Decay pentru disipare si difuzie."""
         if step <= 2 or not valid_cells:
             return shifted_grown.copy()
             
+        # Laplacian Pyramid Decomposition (2 scales)
+        # Baza: Ploaie stratiforma la scara larga
+        # Detaliu: Convectie intensa la scara mica
+        k_size = 15  # Filtru fix pentru separarea scarii stratiforme
+        base_field = cv2.GaussianBlur(shifted_grown, (k_size, k_size), 0)
+        detail_field = shifted_grown - base_field
+        
+        # S-PROG Temporal Decay (AR-2 Critically Damped)
+        # Ofera inertie furtunilor la orizonturi scurte (15m-1h) si cadere accelerata la 2h
+        tau_detail = 6.0
+        tau_base = 24.0
+        
+        decayed_detail = detail_field * (1.0 + step / tau_detail) * np.exp(-step / tau_detail)
+        decayed_base = base_field * (1.0 + step / tau_base) * np.exp(-step / tau_base)
+        
+        # Reconstructia si eliminarea valorilor negative
+        shifted_grown_sprog = np.clip(decayed_base + decayed_detail, 0.0, None)
+        
+        # Pastram si un mic blur de advectie (blend_map) pentru netezire fina pe margini
         extra_px = int(0.1 * step + 0.03 * base_uncertainty)
-        extra_px = min(extra_px, 4)
+        extra_px = min(extra_px, 3)
         
-        if extra_px <= 0:
-            return shifted_grown.copy()
+        if extra_px > 0:
+            local_ksize = 2 * extra_px + 1
+            sigma = extra_px / 2.0
+            blurred = cv2.GaussianBlur(shifted_grown_sprog, (local_ksize, local_ksize), sigma)
             
-        # ponytail: use gaussian blur with mass conservation to preserve mathematical volume totals
-        local_ksize = 2 * extra_px + 1
-        sigma = extra_px / 2.0
-        blurred = cv2.GaussianBlur(shifted_grown, (local_ksize, local_ksize), sigma)
-        sum_orig = np.nansum(shifted_grown)
-        sum_blur = np.nansum(blurred)
-        if sum_blur > 1e-6 and sum_orig > 1e-6:
-            blurred *= (sum_orig / sum_blur)
+            blend_map = np.zeros((grid_h, grid_w), dtype=np.float32)
+            y_grid_local, x_grid_local = self._get_grids((grid_h, grid_w))
             
-        blend_map = np.zeros((grid_h, grid_w), dtype=np.float32)
-        y_grid_local, x_grid_local = self._get_grids((grid_h, grid_w))
-        
-        for c in valid_cells:
-            cx = c.predicted_centroid_x
-            cy = c.predicted_centroid_y
-            kalman_confidence = np.clip(10.0 / (10.0 + c.uncertainty_trace), 0.1, 0.9)
-            extra_blend = 1.0 - kalman_confidence
-            
-            area = max(1.0, c.predicted_area_kalman)
-            radius = max(5.0, np.sqrt(area / np.pi)) * 2.0
-            
-            y_min = max(0, int(cy - 3 * radius))
-            y_max = min(grid_h, int(cy + 3 * radius + 1))
-            x_min = max(0, int(cx - 3 * radius))
-            x_max = min(grid_w, int(cx + 3 * radius + 1))
-            
-            if y_min >= y_max or x_min >= x_max:
-                continue
+            for c in valid_cells:
+                cx = c.predicted_centroid_x
+                cy = c.predicted_centroid_y
+                kalman_confidence = np.clip(10.0 / (10.0 + c.uncertainty_trace), 0.1, 0.9)
+                extra_blend = 1.0 - kalman_confidence
                 
-            y_slice = slice(y_min, y_max)
-            x_slice = slice(x_min, x_max)
+                area = max(1.0, c.predicted_area_kalman)
+                radius = max(5.0, np.sqrt(area / np.pi)) * 2.0
+                
+                y_min = max(0, int(cy - 3 * radius))
+                y_max = min(grid_h, int(cy + 3 * radius + 1))
+                x_min = max(0, int(cx - 3 * radius))
+                x_max = min(grid_w, int(cx + 3 * radius + 1))
+                
+                if y_min >= y_max or x_min >= x_max:
+                    continue
+                    
+                y_slice = slice(y_min, y_max)
+                x_slice = slice(x_min, x_max)
+                
+                dist_sq = (x_grid_local[y_slice, x_slice] - cx)**2 + (y_grid_local[y_slice, x_slice] - cy)**2
+                halo = np.exp(-dist_sq / (2.0 * radius**2))
+                
+                blend_map[y_slice, x_slice] = np.maximum(blend_map[y_slice, x_slice], extra_blend * halo)
+                
+            shifted_grown_sprog = (1.0 - blend_map) * shifted_grown_sprog + blend_map * blurred
             
-            dist_sq = (x_grid_local[y_slice, x_slice] - cx)**2 + (y_grid_local[y_slice, x_slice] - cy)**2
-            halo = np.exp(-dist_sq / (2.0 * radius**2))
-            
-            blend_map[y_slice, x_slice] = np.maximum(blend_map[y_slice, x_slice], extra_blend * halo)
-            
-        # ponytail: strict linear convex blend guarantees exact mathematical mass conservation and cuts FAR
-        return (1.0 - blend_map) * shifted_grown + blend_map * blurred
+        return shifted_grown_sprog

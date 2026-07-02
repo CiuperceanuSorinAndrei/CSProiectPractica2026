@@ -1,11 +1,10 @@
 import numpy as np
 
 def spatial_diffusion(E: float, neighbors_E: np.ndarray, gamma: float = 0.15) -> float:
-    """Bounded diffusion (convex combination)"""
+    """Bounded diffusion (mass conserving discrete Laplacian)"""
     neighbor_mean = neighbors_E.mean() if len(neighbors_E) > 0 else E
-    # ponytail: prevent ghost-heating (parasitic FAR cells feeding off nearby supercells)
-    if neighbor_mean > E:
-        neighbor_mean = E + (neighbor_mean - E) * 0.1
+    # Conservare stricta a masei: difuzia este o combinatie liniara completa,
+    # fara eliminari asimetrice.
     return (1 - gamma) * E + gamma * neighbor_mean
 
 def sigmoid(x: float) -> float:
@@ -16,26 +15,19 @@ def reaction(E: float, dE: float, alpha_g: float = 1.5, alpha_d: float = 1.8, be
     # Scale Invariance: dE must be fractional relative to E
     dE_frac = dE / (abs(E) + 1e-6)
     
-    # Dynamic Inertia: cells with E < 1.0 lose stability faster
-    # As E -> 0, base_inertia approaches ~0.75
-    # As E -> infinity, base_inertia approaches ~0.98 (if beta=1.0)
-    inertia_floor = 0.75
-    inertia_ceil = 1.0 - 0.02 * beta
-    base_inertia = inertia_floor + (inertia_ceil - inertia_floor) * (abs(E) / (abs(E) + 1.0))
+    # Inertie stabila, nu prabusim cand E < 1.0
+    base_inertia = 0.9 + 0.1 * (abs(E) / (abs(E) + 1.0))
     
     if dE_frac >= 0:
-        # Growth regime: creștere proporțională cu derivata (scale invariant)
         R = base_inertia + alpha_g * dE_frac
         
-        # ponytail: damped log-space compounding prevents exponential volumetric explosions at 2h horizons.
-        max_R = 1.0 + 0.05 / (abs(E) + 1.0)
+        # Crestere logistica puternic restrictionata
+        # max_R limitat sever la 1.002 pentru a preveni explozia (+31.6% eroare volumetrica la 2h)
+        # deoarece 1.05^120 pași producea explozie matematica.
+        max_R = 1.0 + 0.002 / (abs(E) + 1.0)
         return min(R, max_R)
         
-    # ponytail: fast kill for small dissipating cells to prevent BAD_ADVECTION ghost storms
-    if E < 1.0:
-        base_inertia *= max(E, 0.0)
-        
-    # Decay regime: colaps exponențial
+    # Decay regime
     return base_inertia * np.exp(-alpha_d * abs(dE_frac))
 
 def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
@@ -45,19 +37,8 @@ def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
                   beta: float = 1.0) -> tuple[float, float, float]:
     E_diff = spatial_diffusion(E, neighbors_E, gamma)
     
-    # Downdraft Shield (Anti Ghost-Heating):
-    # If a cell is actively collapsing, it creates a cold downdraft. 
-    # It cannot absorb energy from neighbors.
-    if dE_old < -0.1:
-        E_diff = min(E, E_diff)
-    
-    # Asymmetric Spatial Drag
-    # Permitem difuziei sa actioneze ca o frana (drag) pentru furtunile care au crescut prea mult fata de vecini.
-    # Daca E_diff < E, furtuna pierde energie in favoarea vecinilor -> momentum negativ.
-    # Nu permitem E_diff > E sa genereze momentum pozitiv pentru a preveni "Ghost Heating" in celulele mici.
+    # Momentum complet (fara amputare artificiala asimetrica)
     diff_term = E_diff - E
-    if diff_term > 0:
-        diff_term = 0.0
         
     dE_input = 0.7 * dE_old + 0.3 * diff_term
     

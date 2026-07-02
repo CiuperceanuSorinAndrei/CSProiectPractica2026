@@ -95,7 +95,17 @@ class AdvectionEngine:
             )
             
             shifted_grown = shifted * growth_mask
-            float_preds[step] = shifted_grown
+            
+            # S-PROG Decay aplicat la fiecare pas pentru a permite apei sa "se evapore" (SOTA)
+            shifted_grown_sprog = self.spatial_mask_builder.apply_sprog_diffusion(
+                shifted_grown, step, valid_cells, grid_h, grid_w, base_uncertainty
+            )
+            
+            # Hard-Thresholding pentru a taia alarmele false din volum
+            hard_mask = (shifted_grown_sprog >= (RAIN_THRESHOLD_TRACKING * 1.5)).astype(np.float32)
+            shifted_grown_sprog = shifted_grown_sprog * hard_mask
+            
+            float_preds[step] = shifted_grown_sprog
             
             # Phase 6: Păstrăm snapshot-ul obiectelor prezise pentru FAR Inspector
             # Omit celulele care s-au disipat (altfel inspectorul le vede ca BAD_ADVECTION)
@@ -103,13 +113,7 @@ class AdvectionEngine:
             
             if step in horizon_map:
                 name = horizon_map[step]
-                
-                # Restore SPROG Diffusion
-                shifted_grown_blurred = self.spatial_mask_builder.apply_sprog_diffusion(
-                    shifted_grown, step, valid_cells, grid_h, grid_w, base_uncertainty
-                )
-                
-                base_mask = (shifted_grown_blurred >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
+                base_mask = (shifted_grown_sprog >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
                 sparse_preds[name] = sp.csr_matrix(base_mask)
             
         return sparse_preds, float_preds, predicted_cells_dict

@@ -44,12 +44,7 @@ class FtpClient:
             self._current_ftp.prot_p()  # Securizeaza conexiunea de date
             print("Conectare securizata (FTPS) reusita")
         except (ftplib.error_perm, ftplib.error_temp, EOFError, OSError) as e:
-            print(f"[Avertisment] FTPS nesuportat de server ({e}). Fallback la FTP nesecurizat...")
-            self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
-            self._current_ftp.login(user=self._username, passwd=self._password)
-            self._current_ftp.cwd(self._base_dir)
-            print("Conectare fallback (FTP plain) reusita")
-            return
+            raise RuntimeError(f"FTPS TLS securizat nesuportat sau a esuat. Fallback-ul plaintext a fost dezactivat pentru securitate. Eroare: {e}")
             
         self._current_ftp.cwd(self._base_dir)
 
