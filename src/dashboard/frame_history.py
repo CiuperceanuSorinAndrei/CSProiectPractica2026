@@ -38,10 +38,12 @@ class FrameHistory:
         self.true_volumes.append(result.roi_map_mm)
         
         # Salvăm predicțiile cumulate (ce cantitate de apă se așteaptă să cadă PÂNĂ LA acel orizont)
-        if hasattr(result, "predicted_volumes_horizons") and result.predicted_volumes_horizons:
-            for horizon in ["15m", "1h", "2h"]:
+        for horizon in ["15m", "1h", "2h"]:
+            if hasattr(result, "predicted_volumes_horizons") and result.predicted_volumes_horizons:
                 val = result.predicted_volumes_horizons.get(horizon, 0.0)
-                self.pred_volumes_acc[horizon].append(val)
+            else:
+                val = 0.0
+            self.pred_volumes_acc[horizon].append(val)
                 
         # Salvăm predicțiile instantanee
         if hasattr(result, "instant_predicted_volumes") and result.instant_predicted_volumes:
@@ -49,6 +51,9 @@ class FrameHistory:
                 val = result.instant_predicted_volumes.get(horizon, 0.0)
                 self.predicted_volume_accumulation[horizon] += val
                 self.pred_volumes[horizon].append(val)
+        else:
+            for horizon in ["15m", "1h", "2h"]:
+                self.pred_volumes[horizon].append(0.0)
                 
         # Calculăm Catchment Event Reliability on the fly folosind Ferestre Cumulate
         # IMPORTANT: Valorile trebuie să fie IDENTICE cu target_step din frame_processor.py horizons

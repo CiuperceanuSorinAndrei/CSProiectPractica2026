@@ -36,43 +36,43 @@ class AdvectionEngine:
             "preds": preds
         })
         
-        # Keep last 10 frames for T-9 calculation
-        if len(self._error_history) > 10:
+        # Keep last 11 frames for T-10 calculation
+        if len(self._error_history) > 11:
             self._error_history.pop(0)
             
-        # Calculate 15m bias (index -2)
-        if len(self._error_history) >= 2:
-            past = self._error_history[-2]
+        # Calculate 15m bias (index -3)
+        if len(self._error_history) >= 3:
+            past = self._error_history[-3]
             pred = past["preds"].get("15m", 0.0)
-            if pred > 0.1 and actual_map > 0.1:
+            if pred > 0.01 and actual_map > 0.01:
                 # Log-space error for PID
-                error = abs(np.log(actual_map + 0.01) - np.log(pred + 0.01))
+                error = abs(np.log(actual_map + 1.0) - np.log(pred + 1.0))
                 alpha = float(np.tanh(error))
-                raw_ratio = (actual_map + 0.1) / (pred + 0.1)
+                raw_ratio = (actual_map + 1.0) / (pred + 1.0)
                 self._pid_bias = (1.0 - alpha) * self._pid_bias + alpha * raw_ratio
-                self._bias_15m = 0.9 * self._bias_15m + 0.1 * np.clip(raw_ratio, 0.2, 3.0)
+                self._bias_15m = 0.9 * self._bias_15m + 0.1 * np.clip(raw_ratio, 0.5, 2.0)
             else:
-                self._pid_bias = 0.9 * self._pid_bias + 0.1 * 1.0
-                self._bias_15m = 0.9 * self._bias_15m + 0.1 * 1.0
-        # Calculate 1h bias (index -5)
-        if len(self._error_history) >= 5:
-            past = self._error_history[-5]
+                self._pid_bias = 0.995 * self._pid_bias + 0.005 * 1.0
+                self._bias_15m = 0.995 * self._bias_15m + 0.005 * 1.0
+        # Calculate 1h bias (index -6)
+        if len(self._error_history) >= 6:
+            past = self._error_history[-6]
             pred = past["preds"].get("1h", 0.0)
-            if pred > 0.1 and actual_map > 0.1:
-                ratio = (actual_map + 0.1) / (pred + 0.1)
-                self._bias_1h = 0.8 * self._bias_1h + 0.2 * np.clip(ratio, 0.2, 3.0)
+            if pred > 0.01 and actual_map > 0.01:
+                ratio = (actual_map + 1.0) / (pred + 1.0)
+                self._bias_1h = 0.6 * self._bias_1h + 0.4 * np.clip(ratio, 0.4, 2.5)
             else:
-                self._bias_1h = 0.9 * self._bias_1h + 0.1 * 1.0
+                self._bias_1h = 0.995 * self._bias_1h + 0.005 * 1.0
 
-        # Calculate 2h bias (index -9)
-        if len(self._error_history) >= 9:
-            past = self._error_history[-9]
+        # Calculate 2h bias (index -10)
+        if len(self._error_history) >= 10:
+            past = self._error_history[-10]
             pred = past["preds"].get("2h", 0.0)
-            if pred > 0.1 and actual_map > 0.1:
-                ratio = (actual_map + 0.1) / (pred + 0.1)
-                self._bias_2h = 0.8 * self._bias_2h + 0.2 * np.clip(ratio, 0.2, 3.0)
+            if pred > 0.01 and actual_map > 0.01:
+                ratio = (actual_map + 1.0) / (pred + 1.0)
+                self._bias_2h = 0.4 * self._bias_2h + 0.6 * np.clip(ratio, 0.3, 3.0)
             else:
-                self._bias_2h = 0.9 * self._bias_2h + 0.1 * 1.0
+                self._bias_2h = 0.995 * self._bias_2h + 0.005 * 1.0
         self.dynamic_bias_correction = self._pid_bias
 
     def extrapolate(

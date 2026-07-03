@@ -11,7 +11,7 @@ def sigmoid(x: float) -> float:
     x = np.clip(x, -30, 30)
     return float(1 / (1 + np.exp(-x)))
 
-def reaction(E: float, dE: float, alpha_g: float = 1.5, alpha_d: float = 1.8, beta: float = 1.0) -> float:
+def reaction(E: float, dE: float, alpha_g: float = 1.2, alpha_d: float = 1.2, beta: float = 1.0) -> float:
     # Scale Invariance: dE must be fractional relative to E
     dE_frac = dE / (abs(E) + 1e-6)
     
