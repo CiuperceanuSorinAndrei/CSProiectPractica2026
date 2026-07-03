@@ -21,7 +21,7 @@ class FrameHistory:
         self.pred_volumes = {"15m": [], "1h": [], "2h": []}
         
         # Event Reliability (Catchment level: Thresholds 0.1 L/m2 si 1.0 L/m2 CUMULAT)
-        self.thresholds = [0.1, 1.0]
+        self.thresholds = [1.0, 5.0]
         self.reliability_counts = {}
         for t in self.thresholds:
             self.reliability_counts[t] = {

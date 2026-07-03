@@ -73,7 +73,7 @@ class FrameProcessor:
             horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
 
         sparse_preds, float_preds, predicted_cells_dict = advection_engine.extrapolate(
-            rain_rate, tracked_cells, horizons
+            rain_rate, tracked_cells, horizons, roi_mask=roi_mask
         )
 
         roi_map_mm, predicted_volumes, instant_predicted_volumes = Evaluator.calculate_volumes(
@@ -86,7 +86,7 @@ class FrameProcessor:
         # ---------------------------------------------------------------------
         advection_engine.update_feedback(
             actual_map=roi_map_mm,
-            predicted_map=instant_predicted_volumes.get("15m", 0.0)
+            preds=instant_predicted_volumes
         )
         # ---------------------------------------------------------------------
 

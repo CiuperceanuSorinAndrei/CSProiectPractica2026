@@ -20,15 +20,11 @@ def reaction(E: float, dE: float, alpha_g: float = 1.5, alpha_d: float = 1.8, be
     
     if dE_frac >= 0:
         R = base_inertia + alpha_g * dE_frac
-        
-        # Crestere logistica puternic restrictionata
-        # max_R limitat sever la 1.002 pentru a preveni explozia (+31.6% eroare volumetrica la 2h)
-        # deoarece 1.05^120 pași producea explozie matematica.
-        max_R = 1.0 + 0.002 / (abs(E) + 1.0)
-        return min(R, max_R)
+        return min(R, 1.05)
         
     # Decay regime
-    return base_inertia * np.exp(-alpha_d * abs(dE_frac))
+    R = base_inertia * np.exp(-alpha_d * abs(dE_frac))
+    return max(R, 0.95)
 
 def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
                   gamma: float = 0.15,
@@ -37,10 +33,11 @@ def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
                   beta: float = 1.0) -> tuple[float, float, float]:
     E_diff = spatial_diffusion(E, neighbors_E, gamma)
     
-    # Momentum complet (fara amputare artificiala asimetrica)
     diff_term = E_diff - E
-        
-    dE_input = 0.7 * dE_old + 0.3 * diff_term
+    
+    # Momentum cu retentie crescuta (amnezie redusa). Furtunile isi amintesc 
+    # trendul de crestere/disipare pentru un orizont mai lung (0.95 in loc de 0.7).
+    dE_input = 0.95 * dE_old + 0.05 * diff_term
     
     R = reaction(E_diff, dE_input, alpha_g, alpha_d, beta)
     

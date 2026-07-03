@@ -39,21 +39,7 @@ class CellLifecycleManager:
                     "area_pixels": int(c_area),
                 }]
 
-    @staticmethod
-    def evaluate_lifecycle(cell: StormCell) -> None:
-        """Determina faza de viata curenta pe baza varstei si a tendintei volumului."""
-        age = cell.age_frames
-        trend = cell.volume_trend or 1.0
-        
-        if age <= 2:
-            cell.lifecycle_phase = "BIRTH"
-        # O celulă devine bătrână (>6 cadre, ~1.5 ore) sau moare anticipat dacă pierde arie
-        elif age > 6 or (age > 3 and trend < 0.95):
-            cell.lifecycle_phase = "DISSIPATION"
-        else:
-            cell.lifecycle_phase = "MATURITY"
-
-    @staticmethod
+    # evaluate_lifecycle removed (using dynamic E/dE reaction-diffusion now)
     def compute_area_trend(tracked_cell: StormCell) -> float:
         if len(tracked_cell.area_history) >= 2:
             area_deltas = [
@@ -62,7 +48,7 @@ class CellLifecycleManager:
             ]
             raw_area_trend = float(np.prod(area_deltas[-3:]) ** (1.0 / len(area_deltas[-3:])))
         else:
-            raw_area_trend = float(tracked_cell.volume_trend or 1.0)
+            raw_area_trend = 1.0
 
         if len(tracked_cell.cell_history) >= 3:
             recent_areas = [item["area_pixels"] for item in tracked_cell.cell_history[-3:]]
@@ -70,7 +56,5 @@ class CellLifecycleManager:
         else:
             recent_area_trend = raw_area_trend
 
-        return float(np.clip(
-            0.8 * recent_area_trend + 0.2 * (tracked_cell.volume_trend or 1.0),
-            0.90, 1.14,
-        ))
+        # Area trend este strict izolat de volum (morfologie pura)
+        return float(recent_area_trend)

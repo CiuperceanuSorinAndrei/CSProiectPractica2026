@@ -37,8 +37,8 @@ DEFAULT_LOCATION_KEY = "Craiova (Centru)"
 DEFAULT_RADIUS_KM = 500
 
 # --- SETĂRI METEO & ALGORITM ---
-RAIN_THRESHOLD_MIN = 0.1    # mm/h minim pentru afisare si volumetrie
-RAIN_THRESHOLD_TRACKING = 0.5 # mm/h minim pentru tracking si metrici cinematice (Core Tracking)
+RAIN_THRESHOLD_MIN = 1.0    # mm/h minim pentru afisare si volumetrie
+RAIN_THRESHOLD_TRACKING = 1.0 # mm/h minim pentru tracking si metrici cinematice (Core Tracking)
 RAIN_THRESHOLD_SEVERE = 5.0 # mm/h pentru vizualizarea ploii severe
 RAIN_VMAX = 12.0            # Limita maximă pe scala de culori a hărții
 

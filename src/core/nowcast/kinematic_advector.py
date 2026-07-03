@@ -16,7 +16,7 @@ class KinematicAdvector:
         shifted = scipy.ndimage.shift(
             rain_rate, 
             shift=(shift_y, shift_x), 
-            order=1, 
+            order=0, 
             cval=0.0
         )
         return np.clip(shifted, 0.0, None)

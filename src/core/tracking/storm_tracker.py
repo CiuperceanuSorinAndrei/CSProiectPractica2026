@@ -156,7 +156,10 @@ class StormTracker:
             py = p_cell.predicted_centroid_y if p_cell.predicted_centroid_y else kf_parent.y
             dist = np.sqrt((c_cell.centroid_x - px) ** 2 + (c_cell.centroid_y - py) ** 2)
 
-            if dist <= (self._max_dist_pixels * 2.5) and dist < best_parent_dist:
+            # Limita Mahalanobis 3-Sigma cu capat fizic
+            actual_limit = np.clip(np.sqrt(max(kf_parent.positional_uncertainty, 1.0)) * 3.0, 10.0, 30.0)
+
+            if dist <= actual_limit and dist < best_parent_dist:
                 best_parent_dist = dist
                 inherited_vx = kf_parent.v_x
                 inherited_vy = kf_parent.v_y

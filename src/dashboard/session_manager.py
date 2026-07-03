@@ -51,6 +51,13 @@ class SessionManager:
 
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
+        
+        # Extindere fortata a ariei de achizitie (Plasa Uriasa) pentru a prinde furtuni rapide indepartate.
+        # ± 2.5 grade inseamna minim 250km raza (~500x500 km harta utila).
+        lon_min = min(lon_min, center_lon - 2.5)
+        lon_max = max(lon_max, center_lon + 2.5)
+        lat_min = min(lat_min, center_lat - 2.5)
+        lat_max = max(lat_max, center_lat + 2.5)
 
         # V24 Fix: Includem si bbox in dataset_id pentru a forta resetarea trackerului daca utilizatorul da zoom!
         dataset_id = (run_mode, str(time_range), str(bbox))

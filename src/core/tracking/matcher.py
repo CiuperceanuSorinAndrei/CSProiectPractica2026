@@ -87,8 +87,9 @@ class Matcher:
         # KD-Tree pre-filtering: cautam vecinii pe o raza dubla pentru a include split-uri si erori
         tree = cKDTree(prev_coords_arr)
 
-        # Cautam toti vecinii pe o raza tripla pentru a include split-uri, deformari si celule foarte rapide
-        radius_limit = max_dist_pixels * 3.0
+        # Cautam vecinii cu o raza fizica maxima absolut sigura (30 pixeli = ~360 km/h)
+        # Orice miscare mai mare este garantat zgomot sau eroare radar
+        radius_limit = 30.0
         
         edges = []
         for i, c_cell in enumerate(current_cells):
@@ -104,8 +105,16 @@ class Matcher:
                 pred_y, pred_x = prev_coords_arr[tree_idx]
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
 
-                adaptive_radius = np.clip(10.0 + np.sqrt(max(float(p_cell.area_pixels), 1.0)) * 1.5, 15.0, 45.0)
-                actual_limit = max(max_dist_pixels * 2.5, adaptive_radius)
+                sigma_pos = 5.0
+                if p_id in kalman_bank:
+                    sigma_pos = np.sqrt(max(kalman_bank[p_id].positional_uncertainty, 1.0))
+                
+                # Limita Mahalanobis 3-Sigma cu capat fizic dictat de diametrul furtunii
+                p_area = float(p_cell.area_pixels if p_cell.area_pixels > 0 else 1.0)
+                physical_radius = np.sqrt(p_area) * 1.5
+                min_limit = max(15.0, physical_radius)
+                
+                actual_limit = np.clip(sigma_pos * 3.0, min_limit, max(45.0, min_limit + 10.0))
                 
                 if dist > actual_limit:
                     continue
@@ -135,13 +144,12 @@ class Matcher:
 
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
                 
-                # Phase 3: Trajectory Filtering (Velocity Constraint)
-                # Dacă deviația față de predicția de mișcare (dist) este prea mare,
-                # asumpția e că am "agățat" un zgomot radar spontan care va genera FAR.
-                if dist > max_dist_pixels * 1.5:
-                    hybrid_cost = 1000.0
+                # Phase 3: Trajectory Filtering (Mahalanobis Constraint)
+                # Daca eroarea (dist) este foarte aproape de marginea tolerantei 3-Sigma, costul explodeaza.
+                if dist > actual_limit * 0.8:
+                    hybrid_cost += 500.0
                 elif hybrid_cost >= 2.5:
-                    hybrid_cost = 1000.0
+                    hybrid_cost += 500.0
 
                 if hybrid_cost < 500.0:
                     edges.append((i, j, hybrid_cost))

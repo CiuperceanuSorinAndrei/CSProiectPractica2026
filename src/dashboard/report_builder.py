@@ -164,11 +164,14 @@ class ReportBuilder:
 
                 vol_real_sum = sum(aligned_true)
                 vol_pred_sum = sum(aligned_pred)
+                
+                # Calculam Bias-ul volumetric procentual pur (sum-based) pentru claritate hidrologica
+                delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0.1 else 0.0
+                
             else:
                 vol_real_sum = hist.total_map_mm
                 vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0)
-
-            delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0 else 0.0
+                delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0.1 else 0.0
 
             vol_rows.append(html.Tr([
                 html.Td(horizon), html.Td(f"{vol_real_sum:.2f} L/m²"),
