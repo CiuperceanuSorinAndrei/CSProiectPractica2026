@@ -12,7 +12,6 @@ def test_frame_processor_e2e_pipeline():
     fara a genera vreo exceptie (TypeErrors / AttributeErrors).
     """
     tracker = StormTracker()
-    predictions_queue = []
 
     # Generam o secventa de 4 cadre cu o celula de ploaie care se misca
     for frame_idx in range(4):
@@ -57,14 +56,10 @@ def test_frame_processor_e2e_pipeline():
         try:
             from src.core.nowcast.advection_engine import AdvectionEngine
             from src.core.nowcast.kinematic_advector import KinematicAdvector
-            from src.core.nowcast.thermodynamic_simulator import ThermodynamicSimulator
-            from src.core.nowcast.spatial_mask_builder import SpatialMaskBuilder
             
-            engine = AdvectionEngine(
-                KinematicAdvector(), ThermodynamicSimulator(), SpatialMaskBuilder()
-            )
+            engine = AdvectionEngine(KinematicAdvector())
             
-            result = FrameProcessor.process(prep, geom, tracker, predictions_queue, engine)
+            result = FrameProcessor.process(prep, geom, tracker, engine)
             
             # Verificam contractul (DTOs)
             assert hasattr(result, "tracked_cells")

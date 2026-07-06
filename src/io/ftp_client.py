@@ -2,7 +2,7 @@ import os
 import time
 import ftplib
 from config import FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER, DATA_RAW_DIR
-from src.io.gz_decompressor import GZDecompressor
+from src.io.gz_decompressor import decompress_file
 
 
 class FtpClient:
@@ -83,7 +83,7 @@ class FtpClient:
             try:
                 with open(gz_local_path, 'wb') as local_file:
                     self._current_ftp.retrbinary(f"RETR {remote_name}", local_file.write)
-                GZDecompressor.decompress_file(gz_local_path, final_nc_path)
+                decompress_file(gz_local_path, final_nc_path)
                 print(f"[OK] {remote_name}")
                 return final_nc_path
             except (ftplib.error_temp, OSError) as exc:

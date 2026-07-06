@@ -7,7 +7,7 @@ Sub-pachete:
   - metrics:   scoruri de validare (CSI/FAR/POD/FSS) + integrare volumetrica
   - pipeline:  orchestrare per-cadru + cache de preprocesare
 
-`domain` (StormCell) si `algorithms_config` raman la radacina, fiind partajate de toate sub-pachetele.
+`domain` (StormCell) ramane la radacina, fiind partajat de toate sub-pachetele.
 """
 from .detection.storm_cell_detector import StormCellDetector
 from .tracking.storm_tracker import StormTracker

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
+from config import RAIN_THRESHOLD_MIN
 
 
 class Evaluator:

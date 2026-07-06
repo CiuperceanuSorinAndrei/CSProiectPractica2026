@@ -1,6 +1,5 @@
-"""Pachet geo: proiectii, decupare pe bounding box si intersectii cu poligoane."""
+"""Pachet geo: proiectii si intersectii cu poligoane."""
 from .projection import GeoProjection
-from .dataset_cropper import DatasetCropper
 from .intersection import PolygonIntersection
 
-__all__ = ["GeoProjection", "DatasetCropper", "PolygonIntersection"]
+__all__ = ["GeoProjection", "PolygonIntersection"]

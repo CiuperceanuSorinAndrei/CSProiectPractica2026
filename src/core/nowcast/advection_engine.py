@@ -1,79 +1,172 @@
 """Motor de advectie Rigid (Lagrangian Persistence)."""
 from __future__ import annotations
 
+from collections import deque
+
 import numpy as np
-import scipy.sparse as sp
 
 
+from src.core.constants import HORIZON_STEPS
 from src.core.domain import StormCell
-from src.core.nowcast.kinematics import KinematicsEngine
 from src.core.nowcast.kinematic_advector import KinematicAdvector
 
-from config import RAIN_THRESHOLD_TRACKING, RAIN_THRESHOLD_MIN
-
 class AdvectionEngine:
+    _MIN_FEEDBACK_MM = 0.02
+    _BIAS_MIN = 0.45
+    _BIAS_MAX = 1.60
+    _BIAS_ALPHA = 0.18
+    _DRY_DECAY = 0.003
+    _WINDOW_SIZE = 9
+
     def __init__(
         self,
         kinematic_advector: KinematicAdvector,
     ) -> None:
         self.kinematic_advector = kinematic_advector
-        self._ema_trend: float = 1.0  # Exponential Moving Average al trendului global
-        
-        # State PID Feedback Control
+        self.reset_feedback()
+
+    def reset_feedback(self) -> None:
+        """Reset online calibration state to neutral."""
         self.dynamic_bias_correction: float = 1.0
         self._pid_bias: float = 1.0
         self._error_history: list[dict] = []
-        
-        # Horizon Calibrators
-        self._bias_15m = 1.0
-        self._bias_1h = 1.0
-        self._bias_2h = 1.0
+        self._bias_by_step = {step: 1.0 for step in HORIZON_STEPS.values()}
+        self._ratio_windows = {
+            step: deque(maxlen=self._WINDOW_SIZE)
+            for step in HORIZON_STEPS.values()
+        }
+        self._sync_legacy_biases()
 
     def update_feedback(self, actual_map: float, preds: dict) -> None:
-        """Encapsulated PID feedback update to keep AdvectionEngine state internal."""
+        """Update calibration from issued cumulative forecasts after they mature."""
         self._error_history.append({
-            "actual": actual_map,
-            "preds": preds
+            "actual": float(actual_map or 0.0),
+            "preds": dict(preds or {})
         })
-        
-        # Keep last 11 frames for T-10 calculation
-        if len(self._error_history) > 11:
-            self._error_history.pop(0)
-            
-        # Calculate 15m bias (index -3)
-        if len(self._error_history) >= 3:
-            past = self._error_history[-3]
-            pred = past["preds"].get("15m", 0.0)
-            if pred > 0.01 and actual_map > 0.01:
-                # Log-space error for PID
-                error = abs(np.log(actual_map + 1.0) - np.log(pred + 1.0))
-                alpha = float(np.tanh(error))
-                raw_ratio = (actual_map + 1.0) / (pred + 1.0)
-                self._pid_bias = (1.0 - alpha) * self._pid_bias + alpha * raw_ratio
-                self._bias_15m = 0.9 * self._bias_15m + 0.1 * np.clip(raw_ratio, 0.5, 2.0)
-            else:
-                self._pid_bias = 0.995 * self._pid_bias + 0.005 * 1.0
-                self._bias_15m = 0.995 * self._bias_15m + 0.005 * 1.0
-        # Calculate 1h bias (index -6)
-        if len(self._error_history) >= 6:
-            past = self._error_history[-6]
-            pred = past["preds"].get("1h", 0.0)
-            if pred > 0.01 and actual_map > 0.01:
-                ratio = (actual_map + 1.0) / (pred + 1.0)
-                self._bias_1h = 0.6 * self._bias_1h + 0.4 * np.clip(ratio, 0.4, 2.5)
-            else:
-                self._bias_1h = 0.995 * self._bias_1h + 0.005 * 1.0
 
-        # Calculate 2h bias (index -10)
-        if len(self._error_history) >= 10:
-            past = self._error_history[-10]
-            pred = past["preds"].get("2h", 0.0)
-            if pred > 0.01 and actual_map > 0.01:
-                ratio = (actual_map + 1.0) / (pred + 1.0)
-                self._bias_2h = 0.4 * self._bias_2h + 0.6 * np.clip(ratio, 0.3, 3.0)
-            else:
-                self._bias_2h = 0.995 * self._bias_2h + 0.005 * 1.0
-        self.dynamic_bias_correction = self._pid_bias
+        max_lag = max(HORIZON_STEPS.values())
+        while len(self._error_history) > max_lag + 1:
+            self._error_history.pop(0)
+
+        for horizon, step in HORIZON_STEPS.items():
+            if len(self._error_history) <= step:
+                continue
+            past = self._error_history[-1 - step]
+            pred = float(past["preds"].get(horizon, 0.0) or 0.0)
+            actual = sum(item["actual"] for item in self._error_history[-step:])
+            self._update_step_bias(step, pred, actual)
+
+        self._sync_legacy_biases()
+
+    def correct_cumulative_volumes(self, volumes: dict[str, float]) -> dict[str, float]:
+        return {
+            horizon: float(volumes.get(horizon, 0.0) or 0.0) * self._bias_by_step.get(step, 1.0)
+            for horizon, step in HORIZON_STEPS.items()
+        }
+
+    def record_current_forecast(self, preds: dict) -> None:
+        if self._error_history:
+            self._error_history[-1]["preds"] = dict(preds or {})
+
+    def _update_step_bias(self, step: int, pred: float, actual: float) -> None:
+        if pred < self._MIN_FEEDBACK_MM and actual < self._MIN_FEEDBACK_MM:
+            self._decay_step_bias(step)
+            return
+        if pred < self._MIN_FEEDBACK_MM:
+            ratio = self._BIAS_MAX
+        elif actual < self._MIN_FEEDBACK_MM:
+            ratio = self._BIAS_MIN
+        else:
+            ratio = actual / pred
+        log_ratio = float(np.clip(
+            np.log(max(ratio, 1e-6)),
+            np.log(self._BIAS_MIN),
+            np.log(self._BIAS_MAX),
+        ))
+        self._ratio_windows[step].append(log_ratio)
+        target = float(np.exp(np.median(self._ratio_windows[step])))
+        current = self._bias_by_step[step]
+        self._bias_by_step[step] = float(np.clip(
+            (1.0 - self._BIAS_ALPHA) * current + self._BIAS_ALPHA * target,
+            self._BIAS_MIN,
+            self._BIAS_MAX,
+        ))
+
+    def _decay_step_bias(self, step: int) -> None:
+        current = self._bias_by_step[step]
+        self._bias_by_step[step] = current + (1.0 - current) * self._DRY_DECAY
+
+    def _sync_legacy_biases(self) -> None:
+        self._bias_15m = self._bias_by_step[HORIZON_STEPS["15m"]]
+        self._bias_1h = self._bias_by_step[HORIZON_STEPS["1h"]]
+        self._bias_2h = self._bias_by_step[HORIZON_STEPS["2h"]]
+        self.dynamic_bias_correction = 1.0
+        self._pid_bias = 1.0
+
+    @staticmethod
+    def _weighted_median(values: list[float], weights: list[float]) -> float:
+        values_arr = np.asarray(values, dtype=float)
+        weights_arr = np.asarray(weights, dtype=float)
+        total = float(np.sum(weights_arr))
+        if total <= 0.0:
+            return float(np.median(values_arr)) if len(values_arr) else 0.0
+        order = np.argsort(values_arr)
+        sorted_values = values_arr[order]
+        cumulative = np.cumsum(weights_arr[order])
+        return float(sorted_values[np.searchsorted(cumulative, 0.5 * total, side="left")])
+
+    @staticmethod
+    def _roi_center_and_scale(shape: tuple[int, int], roi_mask: np.ndarray | None) -> tuple[float, float, float]:
+        if roi_mask is not None:
+            y_indices, x_indices = np.where(roi_mask > 0)
+            if len(y_indices) > 0:
+                cy = float(np.mean(y_indices))
+                cx = float(np.mean(x_indices))
+                height = float(np.ptp(y_indices) + 1)
+                width = float(np.ptp(x_indices) + 1)
+                return cy, cx, max((height * width) ** 0.5, 1.0)
+        return shape[0] / 2.0, shape[1] / 2.0, max((shape[0] * shape[1]) ** 0.5, 1.0)
+
+    @staticmethod
+    def _centroid_confidence(cells: list[StormCell], roi_scale: float) -> float:
+        if not cells:
+            return 1.0
+        centroid_errors = [float(getattr(c, "prediction_error_pixels", 0.0) or 0.0) for c in cells]
+        size_errors = [abs(float(getattr(c, "size_error_percent", 0.0) or 0.0)) for c in cells]
+        centroid_penalty = np.median(centroid_errors) / max(roi_scale * 0.35, 1.0)
+        size_penalty = np.median(size_errors) / 100.0
+        return float(np.clip(1.0 - max(centroid_penalty, size_penalty), 0.0, 1.0))
+
+    def _velocity_for_step(
+        self,
+        cells: list[StormCell],
+        step: int,
+        roi_center: tuple[float, float],
+        roi_scale: float,
+    ) -> tuple[float, float, list[StormCell], list[float]]:
+        cy, cx = roi_center
+        weights = []
+        for c in cells:
+            cell_x = float(getattr(c, "centroid_x", 0.0))
+            cell_y = float(getattr(c, "centroid_y", 0.0))
+            vel_x = float(getattr(c, "v_x", 0.0))
+            vel_y = float(getattr(c, "v_y", 0.0))
+            pred_x = float(getattr(c, "centroid_x", 0.0) + getattr(c, "v_x", 0.0) * step)
+            pred_y = float(getattr(c, "centroid_y", 0.0) + getattr(c, "v_y", 0.0) * step)
+            dist = ((pred_x - cx) ** 2 + (pred_y - cy) ** 2) ** 0.5
+            proximity = 1.0 / (1.0 + (dist / roi_scale) ** 2)
+            to_roi_x = cx - cell_x
+            to_roi_y = cy - cell_y
+            to_roi_len = max((to_roi_x ** 2 + to_roi_y ** 2) ** 0.5, 1e-6)
+            vel_len = max((vel_x ** 2 + vel_y ** 2) ** 0.5, 1e-6)
+            direction = (vel_x * to_roi_x + vel_y * to_roi_y) / (vel_len * to_roi_len)
+            direction_weight = 0.15 if direction < 0.0 else 0.5 + 0.5 * direction
+            mass = max(float(getattr(c, "volume", 0.0) or 0.0), 1e-6)
+            weights.append(mass * proximity * direction_weight)
+
+        vx = self._weighted_median([c.v_x for c in cells], weights) if cells else 0.0
+        vy = self._weighted_median([c.v_y for c in cells], weights) if cells else 0.0
+        return vx, vy, cells, weights
 
     def extrapolate(
         self,
@@ -81,86 +174,52 @@ class AdvectionEngine:
         tracked_cells: list[StormCell],
         horizons: list[tuple[int, str]],
         roi_mask: np.ndarray = None,
-    ) -> tuple[dict[str, sp.csr_matrix], dict[int, np.ndarray], dict[int, list[StormCell]]]:
+    ) -> dict[int, np.ndarray]:
         """Extrapoleaza precipitatiile (Hydrological Catchment Nowcasting)."""
         rain_rate = np.nan_to_num(rain_rate, nan=0.0).astype(np.float32)
         
-        sparse_preds = {}
         float_preds = {}
-        predicted_cells_dict = {}
         
         max_step = max(h[0] for h in horizons) if horizons else 0
-        horizon_map = {h[0]: h[1] for h in horizons}
         
         valid_cells = [c for c in tracked_cells if c.is_tracked]
         simulated_cells = [c.clone() for c in valid_cells]
         
-        # 1. Kinematic Threat Filter (TTA)
-        global_vx, global_vy = 0.0, 0.0
-        mean_E, mean_dE = 1.0, 0.0
+        relevant_cells = []
+        relevant_weights = []
         if simulated_cells:
-            # Target-Locked Advection: Centrul de greutate se calculeaza strict pe bazin (roi_mask)!
-            if roi_mask is not None:
-                y_indices, x_indices = np.where(roi_mask > 0)
-                if len(y_indices) > 0:
-                    cy = float(np.mean(y_indices))
-                    cx = float(np.mean(x_indices))
-                else:
-                    cy, cx = rain_rate.shape[0] / 2.0, rain_rate.shape[1] / 2.0
-            else:
-                cy, cx = rain_rate.shape[0] / 2.0, rain_rate.shape[1] / 2.0
-                
-            threat_cells = []
-            
-            for c in simulated_cells:
-                dx = cx - getattr(c, 'centroid_x', cx)
-                dy = cy - getattr(c, 'centroid_y', cy)
-                dist = (dx**2 + dy**2)**0.5
-                
-                # Furtuna e deja foarte aproape (amenintare iminenta)
-                if dist <= 30.0:
-                    threat_cells.append(c)
-                    continue
-                    
-                # Verifica daca vectorul vitezei bate spre centrul ROI
-                dot = c.v_x * dx + c.v_y * dy
-                if dot > 0:
-                    v_proj = dot / dist
-                    if v_proj > 0:
-                        tta = dist / v_proj  # Time-to-Arrival (cadre)
-                        # Daca ne loveste in fereastra de predictie (plus o marja de eroare)
-                        if tta <= max_step + 4:
-                            threat_cells.append(c)
-            
-            # Daca niciuna nu ne ameninta direct in orizontul nostru,
-            # selectam cele mai apropiate 3 celule pentru a capta fluxul sinoptic local.
-            if not threat_cells:
-                sorted_cells = sorted(simulated_cells, key=lambda c: (cx - getattr(c, 'centroid_x', cx))**2 + (cy - getattr(c, 'centroid_y', cy))**2)
-                threat_cells = sorted_cells[:3]
-                
-            global_vx = float(np.median([c.v_x for c in threat_cells]))
-            global_vy = float(np.median([c.v_y for c in threat_cells]))
+            cy, cx, roi_scale = self._roi_center_and_scale(rain_rate.shape, roi_mask)
+            _, _, relevant_cells, relevant_weights = self._velocity_for_step(
+                simulated_cells, 1, (cy, cx), roi_scale
+            )
+        else:
+            cy, cx, roi_scale = self._roi_center_and_scale(rain_rate.shape, roi_mask)
+        centroid_confidence = self._centroid_confidence(relevant_cells, roi_scale)
         
         # 2. Extragem starea termodinamica curenta folosind Volumele REALE (masa reala de apa)
-        # Folosim DOAR threat_cells (Norii relevanti care vin spre noi). Restul tarii nu ne mai influenteaza!
-        mean_E = np.mean([max(getattr(c, 'volume', 1.0), 1e-6) for c in threat_cells]) if 'threat_cells' in locals() and threat_cells else 1.0
+        # Celulele sunt ponderate dupa masa, distanta si directia catre ROI.
+        mean_E = np.average(
+            [max(getattr(c, 'volume', 1.0), 1e-6) for c in relevant_cells],
+            weights=relevant_weights,
+        ) if relevant_cells else 1.0
         
         # dE real = Volumul curent - Volumul precedent (pe baza la volume_trend)
-        mean_dE = np.mean([
+        mean_dE = np.average([
             getattr(c, 'volume', 0.0) - (getattr(c, 'volume', 0.0) / max(getattr(c, 'volume_trend', 1.0), 1e-5)) 
-            for c in threat_cells
-        ]) if 'threat_cells' in locals() and threat_cells else 0.0
+            for c in relevant_cells
+        ], weights=relevant_weights) if relevant_cells else 0.0
         
         current_E = float(mean_E)
         current_dE = float(mean_dE)
         
         from src.core.nowcast.reaction_diffusion import update_energy
         
-        # PID Feedback Loop (short-term shock absorber)
-        short_term_correction = 1.0 + (self.dynamic_bias_correction - 1.0) * 0.5
-        thermo_multiplier = short_term_correction
+        thermo_multiplier = 1.0
         
         for step in range(1, max_step + 1):
+            global_vx, global_vy, _, _ = self._velocity_for_step(
+                simulated_cells, step, (cy, cx), roi_scale
+            )
             
             # Advectie uniforma prin shiftare scipy
             shift_y = step * global_vy
@@ -171,12 +230,14 @@ class AdvectionEngine:
             )
             
             # Masa aflata efectiv pe ecran (include scaderea naturala la margini)
-            mass_in_domain = float(np.sum(shifted_raw))
             
             # Lăsăm pixelii nealterați. Pragul va fi aplicat corect doar de Evaluator, 
             # DUPĂ ce PID-ul și Termodinamica au scalat complet furtuna. 
             # Aceasta previne Efectul de Clichet Asimetric (pierderea sistematică de masă la margini).
-            shifted = shifted_raw
+            lead_weight = (step - 1) / max(max_step - 1, 1)
+            persistence_blend = 0.60 * (1.0 - centroid_confidence) * lead_weight
+            damped_persistence = np.minimum(shifted_raw, rain_rate)
+            shifted = shifted_raw * (1.0 - persistence_blend) + damped_persistence * persistence_blend
             
             # 1. Conservarea Masei a fost stearsa (Nu dorim compensarea ploilor usoare sterse).
             # Ploaia stearsa la prag ramane stearsa, evitand inflatia artificiala a nucleelor severe.
@@ -185,23 +246,10 @@ class AdvectionEngine:
             current_E, current_dE, R_step = update_energy(current_E, np.array([]), current_dE)
             thermo_multiplier *= R_step
             
-            # Calibrare globală specifică orizontului (aplicata simplu, o singura data)
-            global_bias = 1.0
-            if step <= 2: global_bias = self._bias_15m
-            elif step <= 5: global_bias = self._bias_1h
-            else: global_bias = self._bias_2h
-            
-            # Aplicăm creșterea termodinamică și calibrarea orizontului
-            shifted = shifted * thermo_multiplier * global_bias
+            # Bias-ul online corecteaza doar volumele cumulate afisate, nu campul fizic advectat.
+            shifted = shifted * thermo_multiplier
             
             float_preds[step] = shifted
             
             # Pentru compatibilitatea codului (nu le mai folosim în raport)
-            predicted_cells_dict[step] = []
-            
-            if step in horizon_map:
-                name = horizon_map[step]
-                base_mask = (shifted >= RAIN_THRESHOLD_TRACKING).astype(np.float32)
-                sparse_preds[name] = sp.csr_matrix(base_mask)
-            
-        return sparse_preds, float_preds, predicted_cells_dict
+        return float_preds

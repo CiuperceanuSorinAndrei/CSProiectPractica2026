@@ -25,7 +25,6 @@ class Orchestrator:
     def __init__(self) -> None:
         self._tracker = StormTracker(max_dist_pixels=MAX_TRACKING_DISTANCE_PX)
         self._lock = threading.Lock()
-        self._predictions_queue = []
         self._cache_manager = CacheManager(self._lock)
         self._advection_engine = AdvectionEngine(
             KinematicAdvector()
@@ -35,7 +34,7 @@ class Orchestrator:
         """Goleste complet starea de tracking (Kalman + coada predictii)."""
         with self._lock:
             self._tracker.reset()
-            self._predictions_queue.clear()
+            self._advection_engine.reset_feedback()
 
     def process_frame(
         self,
@@ -59,14 +58,9 @@ class Orchestrator:
                 return None
                 
             result = FrameProcessor.process(
-                prep, self._cache_manager.geometry, self._tracker, self._predictions_queue, self._advection_engine,
+                prep, self._cache_manager.geometry, self._tracker, self._advection_engine,
                 frame_time=frame_time, run_mode=run_mode
             )
-            
-            self._predictions_queue.append((result.sparse_preds, result.raw_predicted_cells))
-            if len(self._predictions_queue) > 25:
-                self._predictions_queue.pop(0)
-                
             return result
         finally:
             self._lock.release()

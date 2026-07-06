@@ -4,23 +4,18 @@ import pytest
 from src.core.tracking.storm_filter import StormFilter
 from src.core.metrics.evaluator import Evaluator
 
-def test_storm_filter_log_space_area():
-    # Test area is properly exponentiated
-    sf = StormFilter(10.0, 10.0, initial_area=50.0)
-    assert np.isclose(sf.area, 50.0)
-    
-    # Test update prevents log(0) or log(negative)
-    sf.update(10.0, 10.0, -10.0)
-    # the internal max(1.0, observed_area) will feed log(1.0)=0 to the filter.
-    # Due to Kalman smoothing, the state won't instantly jump to 1.0, but it will drop significantly from 50.
-    assert sf.area < 25.0
-    assert sf.area > 0.0
+def test_storm_filter_velocity_update_is_finite():
+    sf = StormFilter(10.0, 10.0)
+    sf.predict()
+    sf.update(12.0, 13.0)
+
+    assert np.isfinite([sf.x, sf.y, sf.v_x, sf.v_y]).all()
     
 def test_storm_filter_joseph_form_symmetry():
     sf = StormFilter(10.0, 10.0)
     # Modify P to be slightly asymmetric to simulate float errors
     sf._kf.P[0, 1] += 1e-10
-    sf.update(12.0, 12.0, 15.0)
+    sf.update(12.0, 12.0)
     
     # Check if P is perfectly symmetric
     P = sf._kf.P

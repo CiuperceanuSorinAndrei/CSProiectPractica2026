@@ -82,7 +82,7 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
     nx, ny, proj = _read_grid_and_proj(file_path)
     h = proj["perspective_point_height"]
 
-    # bbox geografic -> limite (metri) pe proiectia geostationara (ca DatasetCropper)
+    # bbox geografic -> limite (metri) pe proiectia geostationara
     transformer = GeoProjection.latlon_to_satellite(proj)
     xs, ys = transformer.transform([lon_min, lon_max, lon_min, lon_max],
                                    [lat_min, lat_min, lat_max, lat_max])

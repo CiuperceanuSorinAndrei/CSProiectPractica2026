@@ -1,6 +1,7 @@
 """Builder pentru metricile si rapoartele HTML din Dashboard."""
 from dash import html
 import dash_bootstrap_components as dbc
+from src.core.constants import HORIZON_NAMES
 from src.dashboard.session_manager import SessionManager
 from src.geo.reservoir_fill import ReservoirFillEstimator
 
@@ -134,7 +135,7 @@ class ReportBuilder:
     def _build_kinematic_rows(hist) -> list:
         """Randuri tabel cu mediile CSI/FAR/POD/FSS pe orizonturi (performanta cinematica)."""
         rows = []
-        for horizon in ["15m", "1h", "2h"]:
+        for horizon in HORIZON_NAMES:
             c = ReportBuilder._avg_metric(hist, "csi", horizon)
             f = ReportBuilder._avg_metric(hist, "far", horizon)
             p = ReportBuilder._avg_metric(hist, "pod", horizon)
@@ -150,28 +151,10 @@ class ReportBuilder:
     def _build_volume_rows(hist) -> list:
         """Randuri tabel cu MAP (L/m²) real vs prezis acumulat per orizont (aliniat corect in timp)."""
         vol_rows = []
-        horizon_steps = {"15m": 2, "1h": 5, "2h": 9}
 
-        for horizon in ["15m", "1h", "2h"]:
-            steps = horizon_steps[horizon]
-
-            # Daca nu avem destule cadre pentru a alinia orizontul, trecem peste sau punem 0
-            if len(hist.true_volumes) > steps and len(hist.pred_volumes[horizon]) > steps:
-                # Volumul real este suma de la pasul 'steps' pana la final
-                aligned_true = hist.true_volumes[steps:]
-                # Volumul prezis este suma prezicerilor facute cu 'steps' in urma, pentru cadrele de azi
-                aligned_pred = hist.pred_volumes[horizon][:-steps]
-
-                vol_real_sum = sum(aligned_true)
-                vol_pred_sum = sum(aligned_pred)
-                
-                # Calculam Bias-ul volumetric procentual pur (sum-based) pentru claritate hidrologica
-                delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0.1 else 0.0
-                
-            else:
-                vol_real_sum = hist.total_map_mm
-                vol_pred_sum = hist.predicted_volume_accumulation.get(horizon, 0.0)
-                delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0.1 else 0.0
+        for horizon in HORIZON_NAMES:
+            vol_real_sum, vol_pred_sum = hist.volume_sums(horizon)
+            delta_pct = ((vol_pred_sum - vol_real_sum) / vol_real_sum * 100.0) if vol_real_sum > 0.1 else 0.0
 
             vol_rows.append(html.Tr([
                 html.Td(horizon), html.Td(f"{vol_real_sum:.2f} L/m²"),
@@ -199,7 +182,7 @@ class ReportBuilder:
             rel_rows.append(html.Tr([
                 html.Td(f"Acumulare > {t} L/m²", colSpan=4, className="fw-bold bg-secondary text-light text-center")
             ]))
-            for horizon in ["15m", "1h", "2h"]:
+            for horizon in HORIZON_NAMES:
                 pod = metrics[horizon]["pod"]
                 far = metrics[horizon]["far"]
                 cmae = metrics[horizon]["cmae"]

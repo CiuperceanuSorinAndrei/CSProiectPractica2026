@@ -14,9 +14,6 @@ from src.core.nowcast.reaction_diffusion import lifecycle
 
 
 class StormTracker:
-    USE_LOGISTIC_GROWTH = True
-    USE_ADAPTIVE_KALMAN = True
-
     def __init__(self, max_dist_pixels: int = 15):
         self._max_dist_pixels = max_dist_pixels
         self._kinematic_updater = KinematicUpdater()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-import threading
 import numpy as np
 from pyproj import CRS, Transformer
 

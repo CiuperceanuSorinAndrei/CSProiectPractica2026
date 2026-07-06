@@ -374,7 +374,7 @@ class DashboardCallbacks:
                 res_data = reservoirs[res_select]
                 center = res_data["center"]
                 polygon = res_data["polygon"]
-                zoom = max(zoom, res_data["radius_km"] * 2.5)
+                zoom = res_data["radius_km"] * 2.5
             else:
                 center = (45.0, 25.0)
         else:

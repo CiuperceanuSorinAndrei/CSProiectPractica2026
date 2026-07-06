@@ -98,8 +98,10 @@ class StormCellDetector:
             if max_area is not None and cell_pixels > max_area:
                 continue
                 
-            y_center, x_center = prop.centroid
             global_coords = prop.coords
+            y_center, x_center = StormCellDetector._rain_weighted_centroid(
+                rain_matrix, global_coords, prop.centroid
+            )
             
             cells.append(StormCell(
                 id=int(prop.label),
@@ -115,6 +117,30 @@ class StormCellDetector:
             ))
 
         return cells
+
+    @staticmethod
+    def _rain_weighted_centroid(
+        rain_matrix: np.ndarray,
+        coords: np.ndarray,
+        fallback: tuple[float, float],
+    ) -> tuple[float, float]:
+        if len(coords) == 0:
+            return float(fallback[0]), float(fallback[1])
+
+        weights = np.asarray(rain_matrix[coords[:, 0], coords[:, 1]], dtype=float)
+        valid = np.isfinite(weights) & (weights > 0.0)
+        if not np.any(valid):
+            return float(fallback[0]), float(fallback[1])
+
+        valid_coords = coords[valid]
+        valid_weights = weights[valid]
+        total = float(np.sum(valid_weights))
+        if not np.isfinite(total) or total <= 0.0:
+            return float(fallback[0]), float(fallback[1])
+
+        y_center = float(np.average(valid_coords[:, 0], weights=valid_weights))
+        x_center = float(np.average(valid_coords[:, 1], weights=valid_weights))
+        return y_center, x_center
 
 
 # --- Testing ---

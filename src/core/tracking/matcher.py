@@ -101,6 +101,7 @@ class Matcher:
             for tree_idx in indices:
                 j = valid_prev_indices[tree_idx]
                 p_cell = previous_cells[j]
+                p_id = p_cell.cell_id
 
                 pred_y, pred_x = prev_coords_arr[tree_idx]
                 dist = np.sqrt((c_x - pred_x) ** 2 + (c_y - pred_y) ** 2)
@@ -130,7 +131,6 @@ class Matcher:
                 volume_penalty = 1.0 - volume_ratio
 
                 p_coords = p_cell.coords
-                p_id = p_cell.cell_id
                 if p_id in kalman_bank:
                     kf = kalman_bank[p_id]
                     arr = np.asarray(p_coords)

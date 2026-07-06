@@ -6,6 +6,7 @@ import numpy as np
 from src.core.tracking.storm_tracker import StormTracker
 from src.core.nowcast.advection_engine import AdvectionEngine
 from src.core.metrics.evaluator import Evaluator
+from src.core.constants import DEFAULT_HORIZONS
 from src.io.frame_preprocessor import FramePrep, FrameGeometry
 from config import RAIN_THRESHOLD_MIN
 
@@ -26,8 +27,6 @@ class FrameResult:
     predicted_volumes_horizons: dict[str, float]
     instant_predicted_volumes: dict[str, float]
     raw_tracked_cells: list[Any] = None
-    raw_predicted_cells: dict[str, list[Any]] = None
-    sparse_preds: Any = None
 
 class FrameProcessor:
     """Serviciu de domeniu stateless. Primeste input-uri decodate si intoarce FrameResult."""
@@ -37,7 +36,6 @@ class FrameProcessor:
         prep: FramePrep, 
         geom: FrameGeometry, 
         tracker: StormTracker, 
-        predictions_queue: list,
         advection_engine: AdvectionEngine,
         frame_time=None, run_mode="historic"
     ) -> FrameResult:
@@ -70,9 +68,9 @@ class FrameProcessor:
             horizons = [(step_15m, "15m"), (step_1h, "1h"), (step_2h, "2h")]
         else:
             # Historic mode: static steps (assuming fixed 15m delay calibration)
-            horizons = [(2, "15m"), (5, "1h"), (9, "2h")]
+            horizons = list(DEFAULT_HORIZONS)
 
-        sparse_preds, float_preds, predicted_cells_dict = advection_engine.extrapolate(
+        float_preds = advection_engine.extrapolate(
             rain_rate, tracked_cells, horizons, roi_mask=roi_mask
         )
 
@@ -86,8 +84,10 @@ class FrameProcessor:
         # ---------------------------------------------------------------------
         advection_engine.update_feedback(
             actual_map=roi_map_mm,
-            preds=instant_predicted_volumes
+            preds={}
         )
+        predicted_volumes = advection_engine.correct_cumulative_volumes(predicted_volumes)
+        advection_engine.record_current_forecast(predicted_volumes)
         # ---------------------------------------------------------------------
 
         valid_errors = [getattr(c, "prediction_error_pixels", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
@@ -108,7 +108,6 @@ class FrameProcessor:
         return FrameResult(
             tracked_cells=tracked_cells_dicts,
             raw_tracked_cells=tracked_cells,
-            raw_predicted_cells=predicted_cells_dict,
             rain_rate=rain_rate,
             rain_rate_masked=rain_rate_masked,
             lon_grid=geom.lon_grid,
@@ -121,5 +120,4 @@ class FrameProcessor:
             predicted_roi_map_mm=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,
             instant_predicted_volumes=instant_predicted_volumes,
-            sparse_preds=sparse_preds,
         )

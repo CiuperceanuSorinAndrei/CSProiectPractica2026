@@ -60,7 +60,7 @@ class SessionManager:
         lat_max = max(lat_max, center_lat + 2.5)
 
         # V24 Fix: Includem si bbox in dataset_id pentru a forta resetarea trackerului daca utilizatorul da zoom!
-        dataset_id = (run_mode, str(time_range), str(bbox))
+        dataset_id = (run_mode, str(time_range), str(bbox), id(polygon))
         session_dataset = self._last_dataset_id.get(session_id)
         is_new_dataset = (session_dataset != dataset_id)
 
