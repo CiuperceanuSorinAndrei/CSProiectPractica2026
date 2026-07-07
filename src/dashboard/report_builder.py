@@ -4,6 +4,7 @@ import dash_bootstrap_components as dbc
 from src.core.constants import HORIZON_NAMES
 from src.dashboard.session_manager import SessionManager
 from src.geo.reservoir_fill import ReservoirFillEstimator
+from src.config import RUNOFF_COEFFICIENT, EVAP_MM_PER_DAY, RESERVOIR_OUTFLOW_M3S
 
 
 class ReportBuilder:
@@ -15,17 +16,50 @@ class ReportBuilder:
         return sum(vals) / len(vals) if vals else 0.0
 
     @staticmethod
-    def _with_fill_pct(value_str: str, map_mm: float, reservoir: dict | None):
-        pct = ReservoirFillEstimator.fill_percentage_for(map_mm, reservoir)
-        if pct is None:
+    def _fill_lines(value_str: str, map_mm: float, reservoir: dict | None, duration_hours: float | None = None,
+                    evap_mm_day: float = EVAP_MM_PER_DAY, outflow_m3s: float = RESERVOIR_OUTFLOW_M3S):
+        res = ReservoirFillEstimator.estimate(
+            map_mm, reservoir, RUNOFF_COEFFICIENT,
+            duration_hours=duration_hours, evap_mm_day=evap_mm_day, outflow_m3s=outflow_m3s)
+        if res is None:
             return value_str
-        return [
-            value_str,
-            html.Div(f"{pct:.2f}% of max volume", className="small text-muted fw-normal mt-1"),
-        ]
+
+        if res.level_source == "assumed_nnr":
+            parts = [f"NNR +{res.contribution_pct:.2f}% of volume"]
+            if res.delta_level_m is not None:
+                parts.append(f"{res.delta_level_m:+.2f} m")
+        elif res.new_fill_pct <= 100.0:
+            parts = [f"{res.start_fill_pct:.0f}% → {res.new_fill_pct:.0f}% of volume"]
+            if res.delta_level_m is not None:
+                parts.append(f"{res.delta_level_m:+.2f} m")
+        elif res.overtops:
+            parts = [f"{res.start_fill_pct:.0f}% → full ⚠ overflow (inflow {res.contribution_pct:.0f}% of volume)"]
+        else:
+            parts = [f"{res.start_fill_pct:.0f}% → full (+{res.level_after_m:.2f} m above NNR)"]
+
+        losses = res.outflow_m3 + res.evap_m3
+        if losses > 0.0 and res.level_source != "assumed_nnr":
+            parts.append(f"−{losses / 1e6:.2f} mil m³ outflows")
+
+        children = [value_str, html.Div(" · ".join(parts), className="small text-muted fw-normal mt-1")]
+        src = ReportBuilder._source_label(reservoir, res)
+        if src:
+            children.append(html.Div(src, className="text-muted fw-normal", style={"fontSize": "0.7rem"}))
+        return children
 
     @staticmethod
-    def format_metrics(session_id: str, result, session_manager: SessionManager, reservoir: dict | None = None):
+    def _source_label(reservoir: dict, res) -> str | None:
+        name = {"lake": "SWOT lake", "river": "SWOT river", "s2": "Sentinel-2"}.get(reservoir.get("level_product"))
+        if name:
+            as_of = reservoir.get("level_as_of")
+            return f"{name} · {as_of[:10]}" if as_of else name
+        if res.level_source == "assumed_nnr":
+            return "assumed NNR"
+        return None
+
+    @staticmethod
+    def format_metrics(session_id: str, result, session_manager: SessionManager, reservoir: dict | None = None,
+                       evap_mm_day: float = EVAP_MM_PER_DAY, outflow_m3s: float = RESERVOIR_OUTFLOW_M3S):
         _, hist = session_manager.get_state(session_id)
 
         hist_vol_str = f"{hist.total_map_mm:.2f} L/m²"
@@ -41,10 +75,10 @@ class ReportBuilder:
         )
 
         # Below the volume metrics (L/m²) we display the percentage of the selected reservoir's max volume.
-        # History uses the accumulated MAP; current/predicted use their own value.
-        hist_vol_str = ReportBuilder._with_fill_pct(hist_vol_str, hist.total_map_mm, reservoir)
-        curr_vol_str = ReportBuilder._with_fill_pct(curr_vol_str, curr_vol, reservoir)
-        pred_vol_str = ReportBuilder._with_fill_pct(pred_vol_str, vols.get("1h", 0.0), reservoir)
+        event_hours = (hist.frames_processed or 0) * 0.25
+        hist_vol_str = ReportBuilder._fill_lines(hist_vol_str, hist.total_map_mm, reservoir, event_hours, evap_mm_day, outflow_m3s)
+        curr_vol_str = ReportBuilder._fill_lines(curr_vol_str, curr_vol, reservoir, None, evap_mm_day, outflow_m3s)
+        pred_vol_str = ReportBuilder._fill_lines(pred_vol_str, vols.get("1h", 0.0), reservoir, None, evap_mm_day, outflow_m3s)
 
         from dash import html
         pred_vol_str = html.Span([

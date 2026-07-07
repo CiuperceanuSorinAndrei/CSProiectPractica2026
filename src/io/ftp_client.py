@@ -49,11 +49,19 @@ class FtpClient:
                 raise  # Let the caller know authentication failed directly!
             # Otherwise maybe it's some other permission issue, fallback
             print(f"FTPS connection failed ({e}). Attempting fallback to plaintext FTP...")
+            try:
+                self._current_ftp.close()
+            except Exception:
+                pass
             self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
             self._current_ftp.login(user=self._username, passwd=self._password)
             print("Plaintext connection (FTP) successful")
         except (ftplib.error_temp, EOFError, OSError) as e:
             print(f"FTPS connection failed ({e}). Attempting fallback to plaintext FTP...")
+            try:
+                self._current_ftp.close()
+            except Exception:
+                pass
             self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
             self._current_ftp.login(user=self._username, passwd=self._password)
             print("Plaintext connection (FTP) successful")

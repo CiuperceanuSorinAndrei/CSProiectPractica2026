@@ -37,3 +37,28 @@ RAIN_VMAX = 12.0
 MAX_TRACKING_DISTANCE_PX = 18
 
 DEFAULT_ANIMATION_SPEED = 0.4
+
+# --- CREDENTIALE DESCARCARE DATE VOLUMETRICE ---
+# NASA Earthdata — nivelele curente SWOT (via PODAAC)
+EDL_USER = os.getenv("EDL_USER")
+EDL_PASS = os.getenv("EDL_PASS")
+# Copernicus Sentinel Hub OAuth client — nivelele curente Sentinel-2
+SH_ID = os.getenv("SH_ID")
+SH_SECRET = os.getenv("SH_SECRET")
+
+# --- SETĂRI VOLUMETRIE LAC ACUMULARE ---
+# Coeficient de scurgere (fractiunea din precipitatie care ajunge in lac ca debit de bazin).
+# Valoare constanta, simplificare; o rafinare ulterioara ar folosi SCS Curve Number.
+RUNOFF_COEFFICIENT = 0.35
+
+# --- BILANT HIDROLOGIC: iesiri (V_{t+1} = V_t + intrare - evacuare - evaporare) ---
+# Evaporare de suprafata (mm/zi). 0 = ignorata (ferestre scurte de nowcast). Se seteaza din ET0
+# FAO Penman-Monteith: pentru Romania ~4-5 mm/zi vara, ~0.5-1 mm/zi iarna.
+EVAP_MM_PER_DAY = 0.0
+# Debit de evacuare asumat la baraj (m^3/s). 0 = ignorat. Releasele operationale (Hidroelectrica,
+# Portile de Fier) domina scaderile reale de nivel, dar nu sunt previzibile din vreme.
+RESERVOIR_OUTFLOW_M3S = 0.0
+
+# Restrange scopul aplicatiei la lacurile cu nivel curent din SWOT (elimina lacurile neacoperite,
+# care ar porni oricum de la NNR). Scripturile de build vad in continuare setul complet.
+RESERVOIRS_SWOT_COVERED_ONLY = True

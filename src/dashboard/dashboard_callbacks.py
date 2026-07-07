@@ -152,6 +152,8 @@ class DashboardCallbacks:
             Input("manual-lon", "value"),
             Input("map-zoom-input", "value"),
             Input("roi-radius-input", "value"),
+            Input("evap-input", "value"),
+            Input("outflow-input", "value"),
             State("run-mode-select", "value"),
             State("active-time-range", "data"),
             State("session-id", "data"),
@@ -270,8 +272,8 @@ class DashboardCallbacks:
             h_s, h_e = int(start_h), int(end_h)
             if not (0 <= h_s <= 23) or not (0 <= h_e <= 23):
                 return "Hours must be between 0 and 23!", dash.no_update, dash.no_update, dash.no_update
-            start_dt = dt.fromisoformat(start_d).replace(hour=h_s)
-            end_dt = dt.fromisoformat(end_d).replace(hour=h_e)
+            start_dt = dt.fromisoformat(start_d).replace(hour=h_s, minute=0, second=0)
+            end_dt = dt.fromisoformat(end_d).replace(hour=h_e, minute=59, second=59)
         except Exception:
             return "Invalid date/time format!", dash.no_update, dash.no_update, dash.no_update
 
@@ -292,7 +294,7 @@ class DashboardCallbacks:
         filtered = self.dashboard._store.filtered(time_range, run_mode="historic")
         return msg, max(len(filtered) - 1, 0), 0, time_range
 
-    def _update_dashboard(self, frame_idx, loc_choice, loc_type, res_select, m_lat, m_lon, map_zoom, radius_km, run_mode, tr_data, session_id):
+    def _update_dashboard(self, frame_idx, loc_choice, loc_type, res_select, m_lat, m_lon, map_zoom, radius_km, evap_val, outflow_val, run_mode, tr_data, session_id):
         ctx = dash.callback_context
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
@@ -338,7 +340,15 @@ class DashboardCallbacks:
 
         diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
         reservoir = self._selected_reservoir(loc_type, res_select)
-        hist_vol, curr_vol, pred_vol, max_rain, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self.dashboard._session_manager, reservoir=reservoir)
+        if reservoir is not None:
+            # starting level matched to selected interval (Sentinel-2 on demand), otherwise static
+            from src.geo.reservoir_level_service import with_interval_level
+            reservoir = with_interval_level(reservoir, res_select, tr_data)
+        
+        hist_vol, curr_vol, pred_vol, max_rain, tracked, in_roi = ReportBuilder.format_metrics(
+            session_id, result, self.dashboard._session_manager, reservoir=reservoir,
+            evap_mm_day=float(evap_val or 0.0), outflow_m3s=float(outflow_val or 0.0))
+        
         lbl_frame = f"Frame: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self.dashboard._session_manager)
 
