@@ -5,10 +5,14 @@ __pycache__/
 
 # Date
 data/raw/
-# Cache tile-uri DEM Copernicus GLO-30 (~2 GB, regenerabil); JSON-ul derivat se comite
+# Cache tile-uri DEM Copernicus GLO-30 (~2 GB, regenerabil)
 data/geo/dem_cache/
-# Cache granule SWOT LakeSP (~22 MB fiecare, regenerabil); reservoir_levels.json se comite
+# Cache granule SWOT LakeSP (~22 MB fiecare, regenerabil)
 data/geo/swot_cache/
+# Date derivate per lac (curbe DEM + nivele SWOT/Sentinel-2), regenerabile cu scripts/build_reservoir_*.py
+data/geo/reservoirs/dem_augment.json
+data/geo/reservoirs/reservoir_levels.json
+data/geo/reservoirs/reservoir_levels_s2.json
 
 # Fișiere de sistem
 .DS_Store
