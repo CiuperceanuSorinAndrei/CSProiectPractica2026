@@ -55,7 +55,7 @@ def _fetch(reservoir: dict, target: str) -> dict | None:
         as_of = s2.best_scene_date(_get_token(), poly, dfrom, dto)
     except Exception:
         as_of = None
-    v0 = min(max(curve.volume_for_wse(wse), 0.0), v_nnr)
+    v0 = max(curve.volume_for_wse(wse), 0.0)
     return {"current_wse_m": round(wse, 2), "current_volume_m3": v0, "current_fill_frac": v0 / v_nnr,
             "level_source": "s2", "level_product": "s2", "level_as_of": as_of or target}
 

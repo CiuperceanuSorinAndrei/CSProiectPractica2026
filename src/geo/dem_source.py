@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 import math
 import urllib.request
+import functools
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import tifffile
@@ -21,7 +23,9 @@ _M_PER_DEG = 111320.0
 
 
 def _tile_id(south: int, west: int) -> str:
-    return f"Copernicus_DSM_COG_10_N{south:02d}_00_E{west:03d}_00_DEM"
+    ns = f"N{south:02d}" if south >= 0 else f"S{abs(south):02d}"
+    ew = f"E{west:03d}" if west >= 0 else f"W{abs(west):03d}"
+    return f"Copernicus_DSM_COG_10_{ns}_00_{ew}_00_DEM"
 
 
 @dataclass
@@ -85,6 +89,7 @@ class DemSource:
                 os.remove(tmp)
             return None  # tile inexistent (ex. peste ocean) sau eroare de retea
 
+    @functools.lru_cache(maxsize=32)
     def _read_tile(self, south: int, west: int) -> np.ndarray | None:
         path = self._tile_path(south, west)
         if path is None:
@@ -97,6 +102,12 @@ class DemSource:
         niciun tile (in afara acoperirii)."""
         w0, w1 = math.floor(lon_min), math.floor(lon_max)
         s0, s1 = math.floor(lat_min), math.floor(lat_max)
+
+        # Pre-fetch tiles in parallel to saturate network
+        pairs = [(south, west) for south in range(s1, s0 - 1, -1) for west in range(w0, w1 + 1)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda p: self._tile_path(*p), pairs))
+
         nx_t, ny_t = (w1 - w0 + 1), (s1 - s0 + 1)
         big = np.full((ny_t * _TILE, nx_t * _TILE), np.nan, dtype=np.float32)
         got = False
