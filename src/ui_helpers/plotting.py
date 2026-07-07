@@ -9,6 +9,8 @@ import cartopy.geodesic as cgeo
 import shapely.geometry as sgeom
 import matplotlib.patheffects as patheffects
 
+from src.config import RAIN_THRESHOLD_MIN, RAIN_VMAX
+
 
 class StormMapPlotter:
     """Randare matplotlib/cartopy a hartii de precipitatii si a overlay-urilor de tracking."""
@@ -19,8 +21,8 @@ class StormMapPlotter:
         lat_grid: np.ndarray,
         rain_rate_masked: np.ma.MaskedArray,
         extent: tuple[float, float, float, float],
-        vmin: float = 0.1,
-        vmax: float = 12.0,
+        vmin: float | None = None,
+        vmax: float | None = None,
         title: str = "",
         roi_center: tuple[float, float] | None = None,
         roi_radius_km: float | None = None,
@@ -34,9 +36,12 @@ class StormMapPlotter:
         Returns:
             (fig, ax, im) - figura, axa cartopy si imaginea pcolormesh
         """
+
         lon_min, lon_max, lat_min, lat_max = extent
 
         # Fundal intunecat (Cinematic Dark Mode)
+        vmin, vmax = StormMapPlotter._resolve_rain_scale(vmin, vmax)
+
         fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={"projection": ccrs.PlateCarree()})
         fig.patch.set_facecolor('#111315') # Culoare margini figura
         ax.set_facecolor('#111315')
@@ -47,7 +52,9 @@ class StormMapPlotter:
         StormMapPlotter._draw_roi(ax, roi_center, roi_radius_km, polygon)
 
         if title:
-            ax.set_title(title, fontsize=11, fontweight="bold", color="#f8f9fa")
+            ax.set_title(title, fontsize=12, fontweight="bold", color="#f8f9fa", pad=10)
+
+        fig.tight_layout(pad=1.5)
 
         return fig, ax, im
 
@@ -65,6 +72,13 @@ class StormMapPlotter:
         gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="#495057", alpha=0.5, zorder=1)
         gl.xlabel_style = {'color': '#adb5bd', 'size': 9}
         gl.ylabel_style = {'color': '#adb5bd', 'size': 9}
+
+    @staticmethod
+    def _resolve_rain_scale(vmin: float | None, vmax: float | None) -> tuple[float, float]:
+        return (
+            RAIN_THRESHOLD_MIN if vmin is None else vmin,
+            RAIN_VMAX if vmax is None else vmax,
+        )
 
     @staticmethod
     def _draw_rain_field(ax, lon_grid, lat_grid, rain_rate_masked, vmin: float, vmax: float):
@@ -88,7 +102,7 @@ class StormMapPlotter:
             transform=ccrs.PlateCarree(),
             cmap=radar_cmap, extend="max", alpha=0.85, zorder=2
         )
-        cb = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.10, shrink=0.8)
+        cb = plt.colorbar(im, ax=ax, orientation="vertical", pad=0.03, shrink=0.92)
         cb.set_label("Intensitate ploaie (mm/h)", color="#adb5bd")
         cb.ax.yaxis.set_tick_params(color="#adb5bd")
         plt.setp(plt.getp(cb.ax.axes, 'yticklabels'), color="#adb5bd")

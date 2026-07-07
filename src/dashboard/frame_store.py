@@ -5,11 +5,7 @@ from datetime import datetime as dt
 
 
 class FrameStore:
-    """Listare, filtrare pe interval si etichetare a cadrelor locale, dupa sablonul de nume.
-
-    Sablonul (strftime, ex. 'h60_%Y%m%d_%H%M_fdk.nc.gz') e configurabil din UI. Fisierele
-    locale sunt decomprimate, deci parsam dupa sablon FARA sufixul .gz.
-    """
+    """Listing, filtering by interval, and labeling of local frames, based on name pattern."""
 
     def __init__(self, data_dir: str, file_format: str):
         self._dir = data_dir
@@ -19,13 +15,17 @@ class FrameStore:
         self._fmt = file_format
         self._local_fmt = file_format[:-3] if file_format.endswith(".gz") else file_format
 
+    def reconfigure(self, data_dir: str, file_format: str) -> None:
+        self._dir = data_dir
+        self.set_format(file_format)
+
     def list(self) -> list[str]:
         if not os.path.isdir(self._dir):
             return []
         return sorted(f for f in os.listdir(self._dir) if self._file_datetime(f) is not None)
 
     def filtered(self, time_range: dict | None, run_mode: str = "historic") -> list[str]:
-        """Cadrele din interval; in modul LIVE returneaza doar cadrele din ziua curenta."""
+        """Frames within the interval; in LIVE mode returns only frames from the current day."""
         files = self.list()
         if run_mode == "live":
             today = dt.utcnow().date()
@@ -52,6 +52,6 @@ class FrameStore:
             return None
 
     def label(self, filename: str) -> str:
-        """Eticheta umana 'YYYY-MM-DD HH:MM' din numele fisierului."""
+        """Human label 'YYYY-MM-DD HH:MM' derived from the filename."""
         d = self._file_datetime(filename)
         return d.strftime("%Y-%m-%d %H:%M") if d is not None else filename

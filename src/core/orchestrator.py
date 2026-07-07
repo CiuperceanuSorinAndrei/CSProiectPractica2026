@@ -1,26 +1,21 @@
-"""Orchestrator Façade: Interfata catre sistemul de procesare pentru Dashboard.
-
-In urma refactorizarii Clean Architecture, Orchestratorul nu mai face procesare
-de date directa si nici nu mai detine dicționare de cache. Rolul sau este exclusiv de 
-a compune componentele de subsol (Tracker, CacheManager, FrameProcessor) 
-si de a garanta protectia UI-ului prin lacatul de executie.
-"""
+"""Facade for the tracking and frame processing systems. Ensures thread safety."""
 from __future__ import annotations
 import threading
+from typing import Optional, Any
 
 from src.core.tracking.storm_tracker import StormTracker
 from src.core.pipeline.cache_manager import CacheManager
 from src.core.pipeline.frame_processor import FrameProcessor, FrameResult
 from src.core.nowcast.advection_engine import AdvectionEngine
 from src.core.nowcast.kinematic_advector import KinematicAdvector
-from config import MAX_TRACKING_DISTANCE_PX
+from src.config import MAX_TRACKING_DISTANCE_PX
 
 class ServerBusy(Exception):
-    """Ridicata cand un alt cadru este deja in procesare (lock-ul orchestratorului e ocupat)."""
+    """Raised when a frame is already being processed."""
     pass
 
 class Orchestrator:
-    """Fatada catre serviciile de tracking si procesare a cadrelor."""
+    """Facade for tracking and frame processing services."""
 
     def __init__(self) -> None:
         self._tracker = StormTracker(max_dist_pixels=MAX_TRACKING_DISTANCE_PX)
@@ -31,7 +26,7 @@ class Orchestrator:
         )
 
     def reset_tracking(self) -> None:
-        """Goleste complet starea de tracking (Kalman + coada predictii)."""
+        """Clears the tracking state."""
         with self._lock:
             self._tracker.reset()
             self._advection_engine.reset_feedback()
@@ -41,12 +36,13 @@ class Orchestrator:
         file_path: str,
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None,
-        frame_time=None, run_mode="historic"
+        center_lat: float, center_lon: float, radius_km: float, 
+        polygon: Optional[Any] = None,
+        frame_time: Optional[str] = None, 
+        run_mode: str = "historic"
     ) -> FrameResult | None:
         self._cache_manager.update_activity()
         
-        # Asteptam scurt dupa lacat pentru a preveni sufocarea UI-ului
         if not self._lock.acquire(timeout=0.5):
             raise ServerBusy()
 
@@ -70,7 +66,8 @@ class Orchestrator:
         file_paths: list[str],
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None
+        center_lat: float, center_lon: float, radius_km: float, 
+        polygon: Optional[Any] = None
     ) -> None:
         self._cache_manager.start_warmup(
             file_paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon

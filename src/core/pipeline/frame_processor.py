@@ -8,7 +8,7 @@ from src.core.nowcast.advection_engine import AdvectionEngine
 from src.core.metrics.evaluator import Evaluator
 from src.core.constants import DEFAULT_HORIZONS
 from src.io.frame_preprocessor import FramePrep, FrameGeometry
-from config import RAIN_THRESHOLD_MIN
+from src.config import RAIN_THRESHOLD_MIN
 
 @dataclass
 class FrameResult:
@@ -42,7 +42,7 @@ class FrameProcessor:
         rain_rate = prep.rain_rate
         roi_mask = geom.roi_mask
 
-        # Copii superficiale cu istoric profund pentru a nu muta celulele memoizate
+        # Clone cells to avoid mutating memoized instances
         cells_for_tracking = [c.clone() for c in prep.filtered_cells]
         tracked_cells = tracker.track(cells_for_tracking, rain_rate)
 
@@ -79,23 +79,20 @@ class FrameProcessor:
             getattr(geom, 'roi_mask_fractional', None)
         )
         
-        # ---------------------------------------------------------------------
-        # PID Feedback Loop: Extragerea și aplicarea Erorii Recente
-        # ---------------------------------------------------------------------
+        # Apply recent error feedback loop
         advection_engine.update_feedback(
             actual_map=roi_map_mm,
             preds={}
         )
         predicted_volumes = advection_engine.correct_cumulative_volumes(predicted_volumes)
         advection_engine.record_current_forecast(predicted_volumes)
-        # ---------------------------------------------------------------------
 
-        valid_errors = [getattr(c, "prediction_error_pixels", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
-        size_errors = [getattr(c, "size_error_percent", 0.0) for c in tracked_cells if getattr(c, "is_tracked", False)]
+        valid_errors = [c.prediction_error_pixels for c in tracked_cells if c.is_tracked]
+        size_errors = [c.size_error_percent for c in tracked_cells if c.is_tracked]
 
         rain_rate_masked = np.ma.masked_where(rain_rate < RAIN_THRESHOLD_MIN, rain_rate)
         
-        # V27: DTO Adapter - Convertim obiectele de domeniu în dicționare serializabile pentru Dash
+        # Convert domain objects to serializable dictionaries for the UI
         tracked_cells_dicts = [c.as_dict() for c in tracked_cells]
         
         roi_mask = getattr(geom, 'roi_mask_fractional', None)
@@ -115,7 +112,7 @@ class FrameProcessor:
             max_rain=max_rain_lm2,
             mean_centroid_error=float(np.mean(valid_errors)) if valid_errors else 0.0,
             mean_size_error=float(np.mean(size_errors)) if size_errors else 0.0,
-            num_tracked=len([c for c in tracked_cells if getattr(c, "is_tracked", False)]),
+            num_tracked=sum(1 for c in tracked_cells if c.is_tracked),
             roi_map_mm=roi_map_mm,
             predicted_roi_map_mm=predicted_volumes.get("1h", 0.0),
             predicted_volumes_horizons=predicted_volumes,

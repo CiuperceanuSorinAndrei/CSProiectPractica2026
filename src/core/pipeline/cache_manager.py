@@ -9,12 +9,11 @@ _WARMUP_GRACE_S = 0.6
 _WARMUP_POLL_S = 0.05
 
 class CacheManager:
-    """Gestioneaza cache-ul de preprocesare, thread-urile si geometria cadrului."""
+    """Manages preprocessing cache, background warmup threads, and frame geometry."""
     
     def __init__(self, execution_lock: threading.Lock):
         self._execution_lock = execution_lock
         
-        # Cache geometrie si preprocesare
         self._geom_key: tuple | None = None
         self._geom: FrameGeometry | None = None
         self._prep_cache: OrderedDict[str, FramePrep] = OrderedDict()

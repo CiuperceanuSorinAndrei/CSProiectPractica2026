@@ -3,7 +3,7 @@ from src.io.frame_preprocessor import FrameGeometry, preprocess
 from dataclasses import dataclass
 
 def test_preprocess_nan_filtering():
-    # Mocam funcția internă doar pentru a verifica conversia NaN a preprocesorului
+    # Mock the internal function just to verify the preprocessor's NaN conversion
     class MockGeometry:
         y_slice = slice(0, 5)
         x_slice = slice(0, 5)
@@ -11,7 +11,7 @@ def test_preprocess_nan_filtering():
         lat_grid = np.zeros((5, 5))
         roi_mask = np.ones((5, 5), dtype=bool)
 
-    # Dacă _read_rain_window returnează NaN-uri, preprocess ar trebui să le convertească în 0.0
+    # If _read_rain_window returns NaNs, preprocess should convert them to 0.0
     from src.io import frame_preprocessor
     original_read = frame_preprocessor._read_rain_window
     try:

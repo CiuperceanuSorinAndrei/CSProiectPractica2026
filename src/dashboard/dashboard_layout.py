@@ -1,15 +1,15 @@
-"""Constructia structurii UI (sidebar + continut). Stilurile dark traiesc in assets/custom.css."""
+"""UI structure construction (sidebar + content)."""
 import uuid
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-from config import PREDEFINED_LOCATIONS
+from src.config import PREDEFINED_LOCATIONS
 from src.dashboard.constants import DEFAULT_TIME_RANGE, MAP_ZOOM_DEFAULT, ROI_RADIUS_DEFAULT
 from src.dashboard.frame_store import FrameStore
 
 
 class DashboardLayout:
-    """Construieste structura UI (sidebar + continut) din metode mici, organizate."""
+    """Builds the UI structure (sidebar + content)."""
 
     def __init__(self, store: FrameStore):
         self._store = store
@@ -34,7 +34,7 @@ class DashboardLayout:
     def _sidebar(self) -> html.Div:
         return html.Div(
             [
-                html.H4("Estimarea volumului de precipitații din produse satelitare",
+                html.H4("Satellite Precipitation Volume Estimation",
                         className="text-info fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 html.Hr(),
                 *self._server_config_section(),
@@ -50,40 +50,40 @@ class DashboardLayout:
 
     @staticmethod
     def _server_config_section() -> list:
-        """Campuri editabile pentru server/foldere/credentiale/format, deasupra tuturor.
-        Pre-completate din setarile persistate (server_settings.json) sau implicitele din config."""
+        """Editable fields for server/folders/credentials/format, on top."""
         from src.io.server_settings import ServerSettings
         s = ServerSettings.load()
         inp = {"className": "mb-2 bg-dark text-light border-secondary", "size": "sm", "debounce": True}
         return [
-            # Buton-antet care arata/ascunde tot blocul de configurare (pagina mai putin aglomerata).
+            # Header button to toggle the configuration block.
             dbc.Button(
-                "▸ Configurare Server",
+                "▸ Server Configuration",
                 id="toggle-server-config", color="link", size="sm",
                 className="fw-bold text-light text-decoration-none p-0 mb-2 shadow-none",
             ),
             dbc.Collapse(
                 [
-                    dbc.Label("Host FTP", className="small text-light mb-1"),
+                    dbc.Label("FTP Host", className="small text-light mb-1"),
                     dbc.Input(id="srv-host", type="text", value=s.host, **inp),
-                    dbc.Label("Director server (sursă)", className="small text-light mb-1"),
+                    dbc.Label("Server directory (source)", className="small text-light mb-1"),
                     dbc.Input(id="srv-remote-dir", type="text", value=s.remote_dir, **inp),
-                    dbc.Label("Director local (salvare)", className="small text-light mb-1"),
+                    dbc.Label("Local directory (save)", className="small text-light mb-1"),
                     dbc.Input(id="srv-local-dir", type="text", value=s.local_dir, **inp),
                     dbc.Row([
                         dbc.Col([
-                            dbc.Label("Utilizator", className="small text-light mb-1"),
+                            dbc.Label("User", className="small text-light mb-1"),
                             dbc.Input(id="srv-user", type="text", value="", **inp),
                         ]),
                         dbc.Col([
-                            dbc.Label("Parolă", className="small text-light mb-1"),
+                            dbc.Label("Password", className="small text-light mb-1"),
                             dbc.Input(id="srv-pass", type="password", value="", **inp),
                         ]),
                     ]),
-                    dbc.Label("Format fișier (strftime)", className="small text-light mb-1"),
+                    dbc.Label("File format (strftime)", className="small text-light mb-1"),
                     dbc.Input(id="srv-format", type="text", value=s.file_format, **inp),
-                    dbc.Label("Interval între cadre (min)", className="small text-light mb-1"),
+                    dbc.Label("Interval between frames (min)", className="small text-light mb-1"),
                     dbc.Input(id="time-delta", type="number", value=s.time_delta, min=1, step=1, **inp),
+                    dbc.Button("Connect / Apply", id="btn-apply-config", color="primary", size="sm", className="mt-2 w-100 fw-bold"),
                 ],
                 id="server-config-collapse", is_open=False,
             ),
@@ -93,12 +93,13 @@ class DashboardLayout:
     @staticmethod
     def _run_mode_section() -> list:
         return [
-            html.H6("Mod de Rulare", className="fw-bold"),
+            html.H6("Run Mode", className="fw-bold"),
             dbc.RadioItems(
                 id="run-mode-select",
-                options=[{"label": "Istoric", "value": "historic"}, {"label": "LIVE", "value": "live"}],
-                value="historic", inline=True, className="mb-4",
+                options=[{"label": "Historic", "value": "historic"}, {"label": "LIVE", "value": "live"}],
+                value="historic", inline=True, className="mb-2",
             ),
+            html.Div(id="live-status", className="small mb-3"),
         ]
 
     @staticmethod
@@ -108,12 +109,12 @@ class DashboardLayout:
         res_options = [{"label": k, "value": k} for k in sorted(reservoirs.keys())]
 
         return [
-            html.H6("Regiune de Interes (ROI)", className="fw-bold"),
+            html.H6("Region of Interest (ROI)", className="fw-bold"),
             dbc.RadioItems(
                 id="location-type",
                 options=[
-                    {"label": "Oraș (Cerc)", "value": "predefined"},
-                    {"label": "Lac Acumulare (Poligon)", "value": "reservoir"}
+                    {"label": "City (Circle)", "value": "predefined"},
+                    {"label": "Reservoir (Polygon)", "value": "reservoir"}
                 ],
                 value="predefined",
                 inline=False,
@@ -122,7 +123,7 @@ class DashboardLayout:
             html.Div(
                 id="predefined-loc-div",
                 children=[
-                    dbc.Label("Alege locație (Punct)"),
+                    dbc.Label("Select location (Point)"),
                     dbc.Select(
                         id="location-select",
                         options=[{"label": k, "value": k} for k in PREDEFINED_LOCATIONS.keys()],
@@ -135,7 +136,7 @@ class DashboardLayout:
                 id="reservoir-loc-div",
                 style={"display": "none"},
                 children=[
-                    dbc.Label("Alege Lac (Contur Exact)"),
+                    dbc.Label("Select Reservoir (Exact Polygon)"),
                     dcc.Dropdown(
                         id="reservoir-select",
                         options=res_options,
@@ -151,12 +152,12 @@ class DashboardLayout:
                 children=[
                     dbc.Row([
                         dbc.Col([
-                            dbc.Label("Latitudine", className="text-light"),
+                            dbc.Label("Latitude", className="text-light"),
                             dbc.Input(id="manual-lat", type="number", value=44.33, step=0.1,
                                       className="bg-dark text-light border-secondary"),
                         ]),
                         dbc.Col([
-                            dbc.Label("Longitudine", className="text-light"),
+                            dbc.Label("Longitude", className="text-light"),
                             dbc.Input(id="manual-lon", type="number", value=23.79, step=0.1,
                                       className="bg-dark text-light border-secondary"),
                         ]),
@@ -164,13 +165,13 @@ class DashboardLayout:
                 ],
                 style={"display": "none"},
             ),
-            dbc.Label("Arie Vizualizare Hartă (km)", className="text-light"),
+            dbc.Label("Map View Area (km)", className="text-light"),
             dbc.Input(id="map-zoom-input", type="number", step=10, debounce=True, value=MAP_ZOOM_DEFAULT,
                       className="mb-3 bg-dark text-light border-secondary"),
             html.Div(
                 id="radius-input-div",
                 children=[
-                    dbc.Label("Rază Circulară (km) - Volum", className="text-light"),
+                    dbc.Label("Circular Radius (km) - Volume", className="text-light"),
                     dbc.Input(id="roi-radius-input", type="number", step=1, debounce=True, value=ROI_RADIUS_DEFAULT,
                               className="mb-4 bg-dark text-light border-secondary"),
                 ]
@@ -182,17 +183,17 @@ class DashboardLayout:
     def _ingestion_section() -> list:
         return [
             html.Div([
-                html.H6("Achiziție Date Istorice", className="fw-bold"),
+                html.H6("Historic Data Acquisition", className="fw-bold"),
                 dbc.Row([
                     dbc.Col([
-                        dbc.Label("Data Start", className="small text-light"),
+                        dbc.Label("Start Date", className="small text-light"),
                         dcc.DatePickerSingle(
                             id="start-date", date=DEFAULT_TIME_RANGE["start"].split("T")[0],
                             display_format="YYYY-MM-DD", className="mb-2 d-block bg-dark"
                         )
                     ]),
                     dbc.Col([
-                        dbc.Label("Data Stop", className="small text-light"),
+                        dbc.Label("Stop Date", className="small text-light"),
                         dcc.DatePickerSingle(
                             id="end-date", date=DEFAULT_TIME_RANGE["end"].split("T")[0],
                             display_format="YYYY-MM-DD", className="mb-2 d-block bg-dark"
@@ -201,17 +202,17 @@ class DashboardLayout:
                 ]),
                 dbc.Row([
                     dbc.Col([
-                        dbc.Label("Ora Start", className="small text-light"),
+                        dbc.Label("Start Hour", className="small text-light"),
                         dbc.Input(id="start-hour", type="number", min=0, max=23, value=22, size="sm",
                                   className="bg-dark text-light border-secondary")
                     ]),
                     dbc.Col([
-                        dbc.Label("Ora Stop", className="small text-light"),
+                        dbc.Label("Stop Hour", className="small text-light"),
                         dbc.Input(id="end-hour", type="number", min=0, max=23, value=23, size="sm",
                                   className="bg-dark text-light border-secondary")
                     ]),
                 ], className="mb-3"),
-                dbc.Button("Validează & Descarcă", id="btn-download", color="light", outline=True,
+                dbc.Button("Validate & Download", id="btn-download", color="light", outline=True,
                            className="w-100 mb-3", size="sm", style={"fontWeight": "bold"}),
                 dcc.Loading(
                     id="loading-download", type="circle", color="#0dcaf0",
@@ -225,10 +226,9 @@ class DashboardLayout:
         return [
             html.Div(
                 [
-                    html.H6("Control Timp", className="fw-bold mb-0", style={"margin-right": "5px"}),
-                    # Spinner mic la dreapta titlului, vizibil cat timp callback-ul principal
-                    # genereaza o imagine noua (sentinel-ul e output, deci Dash il marcheaza "loading").
-                    # borderWidth subtire -> inel circular curat.
+                    html.H6("Time Control", className="fw-bold mb-0", style={"margin-right": "5px"}),
+                    # Small spinner to the right of the title, visible while the main callback
+                    # generates a new image (sentinel is an output, so Dash marks it "loading").
                     dbc.Spinner(
                         html.Div(id="img-loading-sentinel"),
                         size="sm", color="info", type="border",
@@ -237,11 +237,11 @@ class DashboardLayout:
                 ],
                 className="d-flex align-items-center gap-2 mb-2",
             ),
-            dbc.Label(id="frame-label", children="Cadru Selectat: N/A", className="fw-bold text-light"),
+            dbc.Label(id="frame-label", children="Selected Frame: N/A", className="fw-bold text-light"),
             dcc.Slider(0, initial_max, 1, value=0, marks={}, id="frame-slider", className="mb-3"),
             html.Div([
                 dbc.Row([
-                    dbc.Col(dbc.Button("Play/Pauză", id="btn-play", color="success", outline=True, className="w-100 fw-bold")),
+                    dbc.Col(dbc.Button("Play/Pause", id="btn-play", color="success", outline=True, className="w-100 fw-bold")),
                     dbc.Col(dbc.Button("Reset", id="btn-reset", color="danger", outline=True, className="w-100 fw-bold")),
                 ])
             ], id="playback-controls-container"),
@@ -271,17 +271,17 @@ class DashboardLayout:
                     className="shadow-sm border-secondary bg-dark",
                     style={"margin-bottom": "20px"},
                 ),
-                html.H4("Volum", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                html.H4("Volume", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
-                    dbc.Col(self._metric_card("Acumulat (Istoric)", "val-historic-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Curent (L/m²)", "val-current-vol", "info", "info")),
-                    dbc.Col(self._metric_card("Predicție Volum", "val-predicted-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Accumulated (Historic)", "val-historic-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Current (L/m²)", "val-current-vol", "info", "info")),
+                    dbc.Col(self._metric_card("Predicted Volume", "val-predicted-vol", "info", "info")),
                     dbc.Col(self._metric_card("Max. ROI (L/m²)", "val-max-rain", "danger", "danger")),
                 ], className="mb-3"),
-                html.H4("Celule", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
+                html.H4("Cells", className="fw-bold mb-3", style={"fontSize": "1.2rem"}),
                 dbc.Row([
-                    dbc.Col(self._metric_card("Urmărite", "val-tracked", "secondary", "light")),
-                    dbc.Col(self._metric_card("În ROI", "val-in-roi", "secondary", "light")),
+                    dbc.Col(self._metric_card("Tracked", "val-tracked", "secondary", "light")),
+                    dbc.Col(self._metric_card("In ROI", "val-in-roi", "secondary", "light")),
                 ]),
                 html.Div(id="diagnostics-div", className="mb-4", style={"margin-top": "20px"}),
             ],

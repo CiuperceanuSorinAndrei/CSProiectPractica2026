@@ -1,6 +1,6 @@
-"""StormFilter: Starea predictiva Kalman a unei furtuni.
+"""StormFilter: Kalman predictive state for a storm.
 
-Implementeaza un model Constant Velocity (CV) cu stare 4D:
+Implements a Constant Velocity (CV) model with a 4D state:
 [x, y, vx, vy]
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from filterpy.kalman import KalmanFilter
 
 
 class StormFilter:
-    """Incapsuleaza filtrul Kalman (Constant Velocity) pentru urmarirea celulelor."""
+    """Encapsulates the Kalman filter (Constant Velocity) for tracking cells."""
     
     def __init__(
         self,
@@ -18,7 +18,7 @@ class StormFilter:
         initial_vy: float = 0.0, initial_vx: float = 0.0,
         initial_area: float = 1.0, initial_d_area: float = 0.0
     ):
-        # Parametrii pentru arie sunt pastrati in semnatura pentru compatibilitate if needed, dar ignorati
+        # Area parameters kept for backwards compatibility but ignored
         self._kf = KalmanFilter(dim_x=4, dim_z=2)
 
         dt = 1.0  # timp arbitrar = 1 frame
@@ -37,7 +37,7 @@ class StormFilter:
 
     @staticmethod
     def _build_transition_matrix(dt: float) -> np.ndarray:
-        """Matricea de tranzitie F integrata analitic (Constant Velocity Model)."""
+        """Transition matrix F (Constant Velocity Model)."""
         return np.array([
             [1.0, 0.0,  dt, 0.0], # x
             [0.0, 1.0, 0.0,  dt], # y
@@ -47,7 +47,7 @@ class StormFilter:
 
     @staticmethod
     def _build_measurement_matrix() -> np.ndarray:
-        """Matricea de observatie H - masuram direct x, y."""
+        """Observation matrix H - measuring x, y directly."""
         return np.array([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0]
@@ -55,7 +55,7 @@ class StormFilter:
 
     @staticmethod
     def _build_process_noise(dt: float) -> np.ndarray:
-        """Matricea Q (zgomot de proces) pentru Constant Velocity."""
+        """Process noise matrix Q for Constant Velocity."""
         var = 0.1
         Q = np.zeros((4, 4))
         Q[0, 0] = Q[1, 1] = (dt**4 / 4.0) * var
@@ -65,7 +65,7 @@ class StormFilter:
 
     @staticmethod
     def _build_measurement_noise() -> np.ndarray:
-        """Matricea R (zgomot de masura) pentru x, y."""
+        """Measurement noise matrix R for x, y."""
         return np.array([
             [10.0, 0.0],
             [0.0, 10.0]
@@ -82,7 +82,7 @@ class StormFilter:
     def update(self, observed_x: float, observed_y: float) -> None:
         obs_z = np.array([[observed_x], [observed_y]])
         
-        # Salvăm covarianța prior pentru Joseph Form
+        # Save prior covariance for Joseph Form
         P_prior = self._kf.P_prior.copy() if hasattr(self._kf, 'P_prior') else self._kf.P.copy()
         
         try:
@@ -121,5 +121,5 @@ class StormFilter:
 
     @property
     def positional_uncertainty(self) -> float:
-        """Trace-ul matricei de covarianta pentru coordonatele cinematice (x, y, vx, vy)."""
+        """Trace of covariance matrix for kinematic coordinates (x, y, vx, vy)."""
         return float(np.trace(self._kf.P[0:4, 0:4]))

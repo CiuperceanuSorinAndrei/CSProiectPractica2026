@@ -1,4 +1,4 @@
-from test_runner import TARGET_RESERVOIRS, build_target_locations
+from scripts.run_simulations import TARGET_RESERVOIRS, build_target_locations
 
 
 def test_validation_targets_resolve_local_polygons():

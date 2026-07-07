@@ -1,4 +1,4 @@
-"""Modul care incapsuleaza logica de callbacks pentru NowcastingDashboard."""
+"""Module encapsulating the callbacks logic for NowcastingDashboard."""
 from datetime import datetime as dt
 import dash
 from dash import Input, Output, State
@@ -15,7 +15,7 @@ class DashboardCallbacks:
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.app = dashboard.app
-        # Shortcut referințe la dependențele dashboard-ului
+        # Shortcut references to dashboard dependencies
         self.store = dashboard._store
         self.data_service = dashboard._data_service
         self.session_manager = dashboard._session_manager
@@ -76,10 +76,12 @@ class DashboardCallbacks:
         app = self.app
 
         app.callback(
+            Output("live-status", "children"),
             Output("frame-slider", "max", allow_duplicate=True),
             Output("frame-slider", "value", allow_duplicate=True),
             Input("live-polling-interval", "n_intervals"),
             Input("run-mode-select", "value"),
+            Input("btn-apply-config", "n_clicks"),
             State("frame-slider", "value"),
             State("frame-slider", "max"),
             State("srv-host", "value"),
@@ -199,12 +201,20 @@ class DashboardCallbacks:
         is_live = (mode == "live")
         return not is_live, is_live, is_live, False, is_live, is_live, is_live, is_live, is_live
 
-    def _poll_live_data(self, n_int, mode, current_val, current_max,
+    def _poll_live_data(self, n_int, mode, btn_apply, current_val, current_max,
                         host, remote_dir, local_dir, username, password, file_format, time_delta):
         if mode != "live":
             raise PreventUpdate
-        self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
-        self.dashboard._data_service.fetch_latest()
+        
+        try:
+            self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
+            self.dashboard._data_service.fetch_latest()
+        except Exception as e:
+            from dash import html
+            import dash_bootstrap_components as dbc
+            error_msg = dbc.Alert(f"Connection error: {e}", color="danger", className="py-2 mb-0")
+            return error_msg, dash.no_update, dash.no_update
+            
         files = self.dashboard._store.filtered(time_range=None, run_mode="live")
         if not files:
             raise PreventUpdate
@@ -214,12 +224,12 @@ class DashboardCallbacks:
         ctx = dash.callback_context
         triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
-        if triggered_id == "run-mode-select":
-            return new_max, new_max
+        if triggered_id in ("run-mode-select", "btn-apply-config"):
+            return "", new_max, new_max
         
         if current_val is not None and current_max is not None and current_val < current_max:
-            return new_max, dash.no_update
-        return new_max, new_max
+            return "", new_max, dash.no_update
+        return "", new_max, new_max
 
     def _handle_reset(self, n_clicks, session_id):
         if n_clicks:
@@ -232,12 +242,12 @@ class DashboardCallbacks:
         done, total = orch.warm_status()
         if total <= 0 or done >= total:
             return ""
-        return f"⏳ Pre-încărcare cache: {done}/{total} cadre"
+        return f"Preloading cache: {done}/{total} frames"
 
     @staticmethod
     def _toggle_server_config(n, is_open):
         new_open = not is_open
-        return new_open, ("▾ Configurare Server" if new_open else "▸ Configurare Server")
+        return new_open, ("▾ Server Configuration" if new_open else "▸ Server Configuration")
 
     def _apply_settings(self, host, remote_dir, local_dir, username, password, file_format, time_delta):
         s = ServerSettings.from_inputs(host, remote_dir, local_dir, file_format, time_delta, username, password)
@@ -252,25 +262,31 @@ class DashboardCallbacks:
                            host, remote_dir, local_dir, username, password, file_format, time_delta):
         self._apply_settings(host, remote_dir, local_dir, username, password, file_format, time_delta)
         if not start_d or not end_d:
-            return "Selectează datele!", dash.no_update, dash.no_update, dash.no_update
+            return "Select dates!", dash.no_update, dash.no_update, dash.no_update
         if start_h is None or end_h is None:
-            return "Setați o oră validă (0-23)!", dash.no_update, dash.no_update, dash.no_update
+            return "Set a valid hour (0-23)!", dash.no_update, dash.no_update, dash.no_update
 
         try:
             h_s, h_e = int(start_h), int(end_h)
             if not (0 <= h_s <= 23) or not (0 <= h_e <= 23):
-                return "Orele trebuie să fie între 0 și 23!", dash.no_update, dash.no_update, dash.no_update
+                return "Hours must be between 0 and 23!", dash.no_update, dash.no_update, dash.no_update
             start_dt = dt.fromisoformat(start_d).replace(hour=h_s)
             end_dt = dt.fromisoformat(end_d).replace(hour=h_e)
         except Exception:
-            return "Format dată/oră invalid!", dash.no_update, dash.no_update, dash.no_update
+            return "Invalid date/time format!", dash.no_update, dash.no_update, dash.no_update
 
         if start_dt >= end_dt:
-            return "Timpul de Start trebuie să preceadă timpul de Stop!", dash.no_update, dash.no_update, dash.no_update
+            return "Start time must precede Stop time!", dash.no_update, dash.no_update, dash.no_update
 
-        new_count = self.dashboard._data_service.download_range(start_dt, end_dt)
-        msg = (f"✓ S-au descărcat {new_count} fișiere noi. Gata de folosire!" if new_count
-               else "✓ Datele există deja local. Gata de folosire!")
+        try:
+            new_count = self.dashboard._data_service.download_range(start_dt, end_dt)
+            msg = (f"Downloaded {new_count} new files. Ready!" if new_count
+                   else "Data already available locally. Ready!")
+        except Exception as e:
+            from dash import html
+            import dash_bootstrap_components as dbc
+            error_msg = dbc.Alert(f"Connection error: {e}", color="danger", className="py-2 mb-0")
+            return error_msg, dash.no_update, dash.no_update, dash.no_update
 
         time_range = {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
         filtered = self.dashboard._store.filtered(time_range, run_mode="historic")
@@ -290,13 +306,14 @@ class DashboardCallbacks:
         nc_files = self.dashboard._store.filtered(tr_data, run_mode)
         if not nc_files:
             return ("assets/placeholder.png", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
-                    "Fără date", None, None, False, warnings, zoom, radius, "")
+                    "No data", None, None, False, warnings, zoom, radius, "")
 
         frame_idx = min(max(frame_idx, 0), len(nc_files) - 1)
         label = self.dashboard._store.label(nc_files[frame_idx])
 
-        center, polygon, zoom = self._resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom)
-        bbox = self._compute_bbox(center, zoom)
+        center, polygon, prediction_area = self._resolve_roi(loc_type, loc_choice, res_select, m_lat, m_lon, radius)
+        map_bbox = self._compute_bbox(center, zoom)
+        prediction_bbox = self._compute_bbox(center, prediction_area)
 
         from datetime import datetime as dt
         try:
@@ -304,25 +321,25 @@ class DashboardCallbacks:
         except ValueError:
             frame_time = None
             
-        from orchestrator import ServerBusy
+        from src.core.orchestrator import ServerBusy
         try:
             result = self.dashboard._session_manager.process_to_frame(
-                session_id, frame_idx, nc_files, bbox, center, radius, run_mode, tr_data, self.dashboard._store, polygon=polygon, frame_time=frame_time
+                session_id, frame_idx, nc_files, prediction_bbox, center, radius, run_mode, tr_data, self.dashboard._store, polygon=polygon, frame_time=frame_time
             )
         except ServerBusy:
             raise PreventUpdate
 
         if result is None:
-            return ("assets/placeholder.png", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare", "Eroare",
-                    f"Eroare procesare {label}", None, None, False, warnings, zoom, radius, "")
+            return ("assets/placeholder.png", "Error", "Error", "Error", "Error", "Error", "Error",
+                    f"Processing error {label}", None, None, False, warnings, zoom, radius, "")
 
         title = f"[LIVE NOWCAST] {label} UTC" if run_mode == "live" else f"{label} UTC"
-        src = self._render_map_png(result, bbox, center, radius, polygon, title)
+        src = self._render_map_png(result, map_bbox, center, radius, polygon, title)
 
         diagnostics = ReportBuilder.build_diagnostics(result.tracked_cells)
         reservoir = self._selected_reservoir(loc_type, res_select)
         hist_vol, curr_vol, pred_vol, max_rain, tracked, in_roi = ReportBuilder.format_metrics(session_id, result, self.dashboard._session_manager, reservoir=reservoir)
-        lbl_frame = f"Cadru: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
+        lbl_frame = f"Frame: {label} UTC ({frame_idx + 1}/{len(nc_files)})"
         final_report = ReportBuilder.build_final_report(session_id, run_mode, frame_idx, len(nc_files), self.dashboard._session_manager)
 
         return (src, hist_vol, curr_vol, pred_vol, max_rain,
@@ -342,39 +359,40 @@ class DashboardCallbacks:
 
         warnings = []
         if raw_zoom is None:
-            warnings.append(dbc.Alert("Valoare invalidă pentru Arie. S-a folosit valoarea implicită (500 km).", color="danger", className="small mb-2"))
+            warnings.append(dbc.Alert("Invalid value for Area. Defaulting to 500 km.", color="danger", className="small mb-2"))
         elif raw_zoom > MAP_ZOOM_MAX or raw_zoom < MAP_ZOOM_MIN:
-            warnings.append(dbc.Alert(f"Aria introdusă ({raw_zoom} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
+            warnings.append(dbc.Alert(f"Input Area ({raw_zoom} km) was rejected.", color="danger", className="small mb-2 fw-bold"))
 
         if raw_radius is None:
-            warnings.append(dbc.Alert("Valoare invalidă pentru Rază. S-a folosit valoarea implicită (30 km).", color="danger", className="small mb-2"))
+            warnings.append(dbc.Alert("Invalid value for Radius. Defaulting to 30 km.", color="danger", className="small mb-2"))
         elif raw_radius > ROI_RADIUS_MAX or raw_radius < ROI_RADIUS_MIN:
-            warnings.append(dbc.Alert(f"Raza introdusă ({raw_radius} km) a fost respinsă.", color="danger", className="small mb-2 fw-bold"))
+            warnings.append(dbc.Alert(f"Input Radius ({raw_radius} km) was rejected.", color="danger", className="small mb-2 fw-bold"))
 
         return zoom, radius, warnings
 
     @staticmethod
     def _selected_reservoir(loc_type, res_select):
-        """Intrarea ReservoirLoader pentru lacul selectat (cu suprafata + volum maxim), sau None
-        cand ROI-ul nu e un lac de acumulare. Dictionarul de lacuri este memoizat, deci ieftin."""
+        """ReservoirLoader entry for the selected reservoir (with surface area + max volume), or None
+        when ROI is not a reservoir."""
         if loc_type != "reservoir":
             return None
         from src.geo.reservoir_loader import ReservoirLoader
         return ReservoirLoader.get_all_reservoirs().get(res_select)
 
     @staticmethod
-    def _resolve_roi_center(loc_type, loc_choice, res_select, m_lat, m_lon, zoom):
+    def _resolve_roi(loc_type, loc_choice, res_select, m_lat, m_lon, radius):
         from src.geo.reservoir_loader import ReservoirLoader
-        from config import PREDEFINED_LOCATIONS
+        from src.config import PREDEFINED_LOCATIONS
 
         polygon = None
+        roi_extent_km = radius
         if loc_type == "reservoir":
             reservoirs = ReservoirLoader.get_all_reservoirs()
             if res_select in reservoirs:
                 res_data = reservoirs[res_select]
                 center = res_data["center"]
                 polygon = res_data["polygon"]
-                zoom = res_data["radius_km"] * 2.5
+                roi_extent_km = res_data["radius_km"]
             else:
                 center = (45.0, 25.0)
         else:
@@ -384,7 +402,14 @@ class DashboardCallbacks:
                 cfg = PREDEFINED_LOCATIONS[loc_choice]
                 center = (float(cfg["lat"]), float(cfg["lon"]))
 
-        return center, polygon, zoom
+        prediction_area = DashboardCallbacks._prediction_area_from_roi(roi_extent_km)
+        return center, polygon, prediction_area
+
+    @staticmethod
+    def _prediction_area_from_roi(roi_extent_km):
+        from src.dashboard.constants import MAP_ZOOM_MAX
+
+        return min(max(float(roi_extent_km) * 2.5, 300.0), float(MAP_ZOOM_MAX))
 
     @staticmethod
     def _compute_bbox(center, zoom):
@@ -417,8 +442,9 @@ class DashboardCallbacks:
             lat_grid=result.lat_grid
         )
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", dpi=100, facecolor='#212529')
+        fig.savefig(buf, format="png", dpi=100, facecolor='#212529')
         buf.seek(0)
         encoded = base64.b64encode(buf.read()).decode("ascii")
         plt.close(fig)
         return f"data:image/png;base64,{encoded}"
+

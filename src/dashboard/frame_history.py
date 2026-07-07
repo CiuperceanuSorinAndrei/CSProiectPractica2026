@@ -2,7 +2,7 @@ from src.core.constants import HORIZON_NAMES, HORIZON_STEPS
 
 
 class FrameHistory:
-    """Acumuleaza volumul total si seriile de metrici globale (modul istoric)."""
+    """Accumulates total volume and global metric series (historic mode)."""
 
     def __init__(self):
         self.reset()
@@ -13,17 +13,17 @@ class FrameHistory:
         self.frames_processed = 0
         self.last_result = None
         
-        # Stocam istoricul valorilor instantanee
+        # Store the history of instantaneous values
         self.true_volumes = []
         
-        # Volum acumulat estimat pe mai multe orizonturi (legacy, pentru afisare rapida)
+        # Estimated accumulated volume across multiple horizons
         self.predicted_volume_accumulation = {horizon: 0.0 for horizon in HORIZON_NAMES}
         
-        # Stocăm valorile cumulate prezise și instantanee
+        # Store predicted and instantaneous cumulative values
         self.pred_volumes_acc = {horizon: [] for horizon in HORIZON_NAMES}
         self.pred_volumes = {horizon: [] for horizon in HORIZON_NAMES}
         
-        # Event Reliability (Catchment level: Thresholds 0.1 L/m2 si 1.0 L/m2 CUMULAT)
+        # Event Reliability (Catchment level)
         self.thresholds = [1.0, 5.0]
         self.reliability_counts = {}
         for t in self.thresholds:
@@ -39,7 +39,7 @@ class FrameHistory:
         
         self.true_volumes.append(result.roi_map_mm)
         
-        # Salvăm predicțiile cumulate (ce cantitate de apă se așteaptă să cadă PÂNĂ LA acel orizont)
+        # Save cumulative predictions 
         for horizon in HORIZON_NAMES:
             if hasattr(result, "predicted_volumes_horizons") and result.predicted_volumes_horizons:
                 val = result.predicted_volumes_horizons.get(horizon, 0.0)
@@ -47,7 +47,7 @@ class FrameHistory:
                 val = 0.0
             self.pred_volumes_acc[horizon].append(val)
                 
-        # Salvăm predicțiile instantanee
+        # Save instantaneous predictions
         if hasattr(result, "instant_predicted_volumes") and result.instant_predicted_volumes:
             for horizon in HORIZON_NAMES:
                 val = result.instant_predicted_volumes.get(horizon, 0.0)
@@ -57,15 +57,15 @@ class FrameHistory:
             for horizon in HORIZON_NAMES:
                 self.pred_volumes[horizon].append(0.0)
                 
-        # Calculăm Catchment Event Reliability on the fly folosind Ferestre Cumulate
-        # IMPORTANT: Valorile trebuie să fie IDENTICE cu target_step din frame_processor.py horizons
+        # Calculate Catchment Event Reliability on the fly using Cumulative Windows
+        # IMPORTANT: The values must be IDENTICAL to the target_step from frame_processor.py horizons
         for horizon, steps in HORIZON_STEPS.items():
             if len(self.true_volumes) > steps:
-                # Realitatea cumulată (ex: suma ploilor din ultimul 1h)
-                # Extragem ultimele 'steps' elemente și facem suma
+                # Cumulative reality (e.g., sum of rain from the last 1h)
+                # Extract the last 'steps' elements and calculate the sum
                 actual_acc_val = sum(self.true_volumes[-steps:])
                 
-                # Predicția făcută acum 'steps' cadre în urmă referitoare la cantitatea CUMULATĂ pe parcursul celor 'steps' cadre
+                # The prediction made 'steps' frames ago regarding the CUMULATIVE amount over those 'steps' frames
                 pred_acc_val = self.pred_volumes_acc[horizon][-1 - steps]
                 
                 for t in self.thresholds:
@@ -75,7 +75,7 @@ class FrameHistory:
                     counts = self.reliability_counts[t][horizon]
                     if pred_event and actual_event:
                         counts["hits"] += 1
-                        # Eroarea cantitativă procentuală simetrică pe interval (sMAPE)
+                        # Symmetric percentage quantitative error over the interval (sMAPE)
                         denominator = pred_acc_val + actual_acc_val
                         if denominator > 0:
                             counts["abs_err_sum"] += 2.0 * abs(pred_acc_val - actual_acc_val) / denominator * 100.0
@@ -87,7 +87,7 @@ class FrameHistory:
                         counts["cr"] += 1
 
     def volume_sums(self, horizon: str) -> tuple[float, float]:
-        """Returneaza MAP real/prezis aliniat la lead time-ul orizontului."""
+        """Returns real/predicted MAP aligned to the horizon lead time."""
         steps = HORIZON_STEPS[horizon]
         if len(self.true_volumes) > steps and len(self.pred_volumes_acc[horizon]) > steps:
             actual_sum = 0.0
@@ -102,7 +102,7 @@ class FrameHistory:
         )
 
     def get_reliability_metrics(self) -> dict[float, dict[str, dict[str, float]]]:
-        """Returneaza POD, FAR si CMAE la nivel de bazin pentru fiecare prag si orizont."""
+        """Returns Catchment level POD, FAR and CMAE for each threshold and horizon."""
         metrics = {}
         for t in self.thresholds:
             metrics[t] = {}

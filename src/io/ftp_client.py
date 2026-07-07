@@ -1,7 +1,7 @@
 import os
 import time
 import ftplib
-from config import FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER, DATA_RAW_DIR
+from src.config import FTP_HOST, FTP_BASE_FOLDER, DATA_RAW_DIR
 from src.io.gz_decompressor import decompress_file
 
 
@@ -37,33 +37,42 @@ class FtpClient:
         self._retry_backoff = retry_backoff
 
     def connect(self):
-        print(f"Conectare la FTP {self._host}...")
+        print(f"Connecting to FTP {self._host}...")
         try:
             self._current_ftp = ftplib.FTP_TLS(self._host, timeout=self._timeout)
             self._current_ftp.login(user=self._username, passwd=self._password)
-            self._current_ftp.prot_p()  # Securizeaza conexiunea de date
-            print("Conectare securizata (FTPS) reusita")
-        except (ftplib.error_perm, ftplib.error_temp, EOFError, OSError) as e:
-            print(f"Conectare FTPS a eșuat ({e}). Se încearcă fallback la plaintext FTP...")
+            self._current_ftp.prot_p()  # Secures the data connection
+            print("Secure connection (FTPS) successful")
+        except ftplib.error_perm as e:
+            if "Login incorrect" in str(e) or "Authentication failed" in str(e):
+                print(f"Authentication failed: {e}")
+                raise  # Let the caller know authentication failed directly!
+            # Otherwise maybe it's some other permission issue, fallback
+            print(f"FTPS connection failed ({e}). Attempting fallback to plaintext FTP...")
             self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
             self._current_ftp.login(user=self._username, passwd=self._password)
-            print("Conectare plaintext (FTP) reusita")
+            print("Plaintext connection (FTP) successful")
+        except (ftplib.error_temp, EOFError, OSError) as e:
+            print(f"FTPS connection failed ({e}). Attempting fallback to plaintext FTP...")
+            self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
+            self._current_ftp.login(user=self._username, passwd=self._password)
+            print("Plaintext connection (FTP) successful")
         self._current_ftp.cwd(self._base_dir)
 
     def disconnect(self):
-        print(f"Deconectare de la FTP {self._host}...")
+        print(f"Disconnecting from FTP {self._host}...")
         self._current_ftp.quit()
         self._current_ftp = None
-        print("Deconectare reusita")
+        print("Disconnection successful")
 
-    # Dimensiunea unui fisier remote in bytes (None daca nu exista). Folosit in modul LIVE.
+    # Size of a remote file in bytes (None if it doesn't exist). Used in LIVE mode.
     def file_size(self, file_name: str) -> int | None:
         try:
             return self._current_ftp.size(file_name)
         except Exception:
             return None
 
-    # Returneaza calea locala unde este descarcat fisierul (sau None la esec)
+    # Returns the local path where the file is downloaded (or None on failure)
     def fetch_file(self, file_name: str) -> str | None:
         if file_name.endswith('.gz'):
             unzipped_filename = file_name[:-3]
@@ -74,8 +83,8 @@ class FtpClient:
 
         os.makedirs(self._local_dir, exist_ok=True)
         final_nc_path = os.path.join(self._local_dir, unzipped_filename)
-        if os.path.exists(final_nc_path):
-            print(f"[SKIP] Gasit local: {unzipped_filename}")
+        if os.path.exists(final_nc_path) and os.path.getsize(final_nc_path) > 1024:
+            print(f"[SKIP] Found locally: {unzipped_filename}")
             return final_nc_path
 
         gz_local_path = final_nc_path + ".gz"
@@ -91,7 +100,7 @@ class FtpClient:
                 if attempt < self._max_retries:
                     time.sleep(self._retry_backoff * attempt)
             except Exception as file_err:
-                print(f"[ESUAT] {remote_name}: {file_err}")
+                print(f"[FAILED] {remote_name}: {file_err}")
                 return None
             finally:
                 if os.path.exists(gz_local_path):
@@ -102,7 +111,7 @@ class FtpClient:
 
         return None
 
-    # Returneaza fisierele locale unde sunt descarcate
+    # Returns the local files where they are downloaded
     def fetch_files(self, file_names: list[str]) -> list[str]:
         local_paths = []
         for file_name in file_names:
@@ -113,7 +122,7 @@ class FtpClient:
 
 # --- Testing ---
 if __name__ == "__main__":
-    client = FtpClient(FTP_HOST, FTP_USER, FTP_PASS, FTP_BASE_FOLDER)
+    client = FtpClient(FTP_HOST, "username", "password", FTP_BASE_FOLDER)
     try:
         client.connect()
         client.disconnect()

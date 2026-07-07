@@ -1,4 +1,4 @@
-"""Aplicatia Dash: detine orchestrator-ul, serviciul de date, starea si callbacks."""
+"""Dash Application: holds the orchestrator, data service, state, and callbacks."""
 import os
 from datetime import datetime as dt
 
@@ -13,7 +13,7 @@ import dash_bootstrap_components as dbc
 from src.io.cloud_data_service import CloudDataService
 from src.io.server_settings import ServerSettings
 from src.ui_helpers.plotting import StormMapPlotter
-from config import PREDEFINED_LOCATIONS, BASE_DIR
+from src.config import PREDEFINED_LOCATIONS, BASE_DIR
 
 from src.dashboard.constants import MANUAL_LOCATION, DEFAULT_TIME_RANGE
 from src.dashboard.frame_store import FrameStore
@@ -24,7 +24,6 @@ from src.dashboard.report_builder import ReportBuilder
 from src.dashboard.dashboard_callbacks import DashboardCallbacks
 
 class NowcastingDashboard:
-    """Aplicatia Dash simplificata."""
 
     def __init__(self):
         self._settings = ServerSettings.load()
@@ -36,18 +35,16 @@ class NowcastingDashboard:
             __name__,
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
-            # Nu inlocui titlul cu "Updating..." la fiecare callback (ex. poll-ul de progres),
-            # altfel titlul paginii palpaie continuu.
             update_title=None,
         )
-        self.app.title = "Estimarea volumului de precipitații"
+        self.app.title = "Precipitation Volume Estimation"
         
         def serve_layout():
             return DashboardLayout(self._store).build()
             
         self.app.layout = serve_layout
         
-        # Inregistram callback-urile din modulul separat
+        # Register callbacks from the separated module
         DashboardCallbacks(self).register()
 
     @property
@@ -55,6 +52,5 @@ class NowcastingDashboard:
         return self.app.server
 
     def run(self, debug: bool = True, port: int = 8050) -> None:
-        print("Porneste serverul Dash... Deschide http://127.0.0.1:8050 in browser!")
-        # Dezactivam use_reloader pentru ca descarcarea de date locale sa nu cauzeze restartarea serverului in timpul descarcarii!
+        print("Starting Dash server... Open http://127.0.0.1:8050 in your browser!")
         self.app.run(debug=debug, port=port, use_reloader=False)

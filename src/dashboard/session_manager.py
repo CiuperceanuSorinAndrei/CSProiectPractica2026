@@ -1,13 +1,13 @@
-"""Gestionarea starii per-utilizator (Sesiuni) pentru Dashboard."""
+"""Per-user state management (Sessions) for the Dashboard."""
 import time
 import uuid
 
-from orchestrator import Orchestrator
+from src.core.orchestrator import Orchestrator
 from src.dashboard.frame_history import FrameHistory
 
 
 class SessionManager:
-    """Gestioneaza instantele de Orchestrator si FrameHistory per sesiune."""
+    """Manages Orchestrator and FrameHistory instances per session."""
     
     def __init__(self):
         self._orchestrators: dict[str, Orchestrator] = {}
@@ -16,7 +16,7 @@ class SessionManager:
         self._last_access: dict[str, float] = {}
 
     def _cleanup_old_sessions(self):
-        """Previnem Memory Leak stergand sesiunile mai vechi de 1 ora."""
+        """Prevent Memory Leaks by removing sessions older than 1 hour."""
         now = time.time()
         expired = [sid for sid, t in self._last_access.items() if now - t > 3600]
         for sid in expired:
@@ -45,22 +45,14 @@ class SessionManager:
         bbox: tuple[float, float, float, float], center: tuple[float, float],
         radius_km: float, run_mode: str, time_range: dict, store, polygon=None, frame_time=None
     ):
-        """Proceseaza cadru logic (acumulare/re-randare/salt) si mentine starea."""
+        """Processes logical frame (accumulation/re-rendering/jump) and maintains state."""
         self._last_access[session_id] = time.time()
         self._cleanup_old_sessions()
 
         lon_min, lon_max, lat_min, lat_max = bbox
         center_lat, center_lon = center
-        
-        # Extindere fortata a ariei de achizitie (Plasa Uriasa) pentru a prinde furtuni rapide indepartate.
-        # ± 2.5 grade inseamna minim 250km raza (~500x500 km harta utila).
-        lon_min = min(lon_min, center_lon - 2.5)
-        lon_max = max(lon_max, center_lon + 2.5)
-        lat_min = min(lat_min, center_lat - 2.5)
-        lat_max = max(lat_max, center_lat + 2.5)
 
-        # V24 Fix: Includem si bbox in dataset_id pentru a forta resetarea trackerului daca utilizatorul da zoom!
-        dataset_id = (run_mode, str(time_range), str(bbox), id(polygon))
+        dataset_id = (run_mode, str(time_range), str(bbox), center, radius_km, id(polygon))
         session_dataset = self._last_dataset_id.get(session_id)
         is_new_dataset = (session_dataset != dataset_id)
 
@@ -75,23 +67,19 @@ class SessionManager:
 
         if is_new_dataset or frame_idx < hist.last_frame_idx:
             def warmup():
-                # Pornim warm-up-ul DUPA ce primul cadru a stabilit geometria (_geom_key); altfel
-                # thread-ul de warm-up vede _geom_key=None, esueaza verificarea si se opreste imediat.
                 paths = [store.path(f) for f in nc_files]
                 orch.start_warmup(paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon=polygon)
 
             self._last_dataset_id[session_id] = dataset_id
             result = self._replay_from_start(run, warmup, orch, hist, frame_idx)
-        elif frame_idx == hist.last_frame_idx + 1:  # cadru consecutiv
+        elif frame_idx == hist.last_frame_idx + 1:  # consecutive frame
             result = run(frame_idx, frame_time)
             if result is None:
                 return None
             hist.accumulate(result)
-        elif frame_idx == hist.last_frame_idx:  # acelasi cadru
-            # V24 Fix: Returnam ultimul rezultat in loc sa rulam run(frame_idx) din nou,
-            # ceea ce distrugea tracker-ul (viteza 0).
+        elif frame_idx == hist.last_frame_idx:  # same frame
             return hist.last_result
-        else:  # salt inainte peste mai multe cadre
+        else:  
             self._accumulate_range(run, hist, max(0, hist.last_frame_idx + 1), frame_idx)
             result = run(frame_idx, frame_time)
             if result is None:
@@ -103,7 +91,7 @@ class SessionManager:
 
     @staticmethod
     def _accumulate_range(run, hist, start: int, stop: int) -> None:
-        """Ruleaza si acumuleaza in istoric cadrele intermediare din intervalul [start, stop)."""
+        """Runs and accumulates intermediate frames in the interval [start, stop)."""
         for i in range(start, stop):
             inter = run(i)
             if inter:
@@ -111,7 +99,7 @@ class SessionManager:
 
     @staticmethod
     def _replay_from_start(run, warmup, orch, hist, frame_idx: int):
-        """Reset complet + re-rulare de la cadrul 0 la frame_idx (dataset nou sau derulare inapoi)."""
+        """Full reset + re-run from frame 0 to frame_idx (new dataset or rewind)."""
         orch.reset_tracking()
         hist.reset()
         SessionManager._accumulate_range(run, hist, 0, frame_idx)

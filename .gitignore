@@ -1,16 +1,17 @@
-# Medii virtuale
+# Virtual environments
 .venv/
 env/
 __pycache__/
 
-# Date
+# Data
 data/raw/
+data/server_settings.json
 
-# Fișiere de sistem
+# System files
 .DS_Store
 *.log
 
-# Date de logare
+# Environment variables
 .env
 
 .agents

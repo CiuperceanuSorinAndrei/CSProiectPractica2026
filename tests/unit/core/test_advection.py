@@ -41,6 +41,20 @@ def test_tracked_cell_advection_shape_and_nan_bounds():
     assert not np.isnan(float_preds[1]).any()
 
 
+def test_advection_ensemble_returns_all_steps_shape_and_finite_values():
+    cell = StormCell(is_tracked=True, centroid_y=10, centroid_x=10, v_y=1, v_x=2, volume=3)
+    rain_rate = np.zeros((20, 20), dtype=np.float32)
+    rain_rate[10, 10] = 5.0
+
+    preds = _create_engine().extrapolate(
+        rain_rate, [cell], [(HORIZON_STEPS["15m"], "15m"), (HORIZON_STEPS["1h"], "1h")]
+    )
+
+    assert set(preds) == set(range(1, HORIZON_STEPS["1h"] + 1))
+    assert all(pred.shape == rain_rate.shape for pred in preds.values())
+    assert all(np.isfinite(pred).all() for pred in preds.values())
+
+
 def test_step_specific_velocity_changes_as_cell_approaches_roi():
     engine = _create_engine()
     cells = [
@@ -166,8 +180,57 @@ def test_unreliable_centroids_blend_later_steps_toward_persistence():
     assert np.sum(np.abs(unreliable_pred - rain_rate)) < np.sum(np.abs(reliable_pred - rain_rate))
 
 
+def test_low_tracking_confidence_damps_without_raw_persistence():
+    rain_rate = np.zeros((30, 30), dtype=np.float32)
+    rain_rate[15, 15] = 5.0
+    unreliable = StormCell(
+        is_tracked=True, centroid_y=15, centroid_x=15, v_y=0, v_x=4, volume=1,
+        prediction_error_pixels=999.0,
+    )
+
+    pred = _create_engine().extrapolate(rain_rate, [unreliable], [(2, "15m")])[2]
+
+    assert pred[15, 15] < rain_rate[15, 15]
+    assert pred[15, 19] > 0.0
+
+
+def test_dry_guard_only_trims_low_confidence_weak_forecast_after_recent_dry():
+    rain_rate = np.full((10, 10), 0.1, dtype=np.float32)
+    low_conf = StormCell(is_tracked=True, centroid_y=5, centroid_x=5, prediction_error_pixels=999.0)
+    high_conf = StormCell(is_tracked=True, centroid_y=5, centroid_x=5)
+    dry_engine = _create_engine()
+    wet_engine = _create_engine()
+    high_conf_dry_engine = _create_engine()
+    high_conf_wet_engine = _create_engine()
+    for engine, actual in [
+        (dry_engine, 0.0),
+        (wet_engine, 1.0),
+        (high_conf_dry_engine, 0.0),
+        (high_conf_wet_engine, 1.0),
+    ]:
+        engine.update_feedback(actual, {})
+
+    dry_pred = dry_engine.extrapolate(rain_rate, [low_conf], [(1, "15m")])[1]
+    wet_pred = wet_engine.extrapolate(rain_rate, [low_conf], [(1, "15m")])[1]
+    high_conf_dry_pred = high_conf_dry_engine.extrapolate(rain_rate, [high_conf], [(1, "15m")])[1]
+    high_conf_wet_pred = high_conf_wet_engine.extrapolate(rain_rate, [high_conf], [(1, "15m")])[1]
+
+    assert float(np.mean(dry_pred)) < float(np.mean(wet_pred))
+    assert np.isclose(float(np.mean(high_conf_dry_pred)), float(np.mean(high_conf_wet_pred)))
+
+
+def test_false_positive_bias_corrects_down_faster_than_miss_corrects_up():
+    down = _create_engine()
+    up = _create_engine()
+
+    down._update_step_bias(HORIZON_STEPS["15m"], pred=10.0, actual=0.0)
+    up._update_step_bias(HORIZON_STEPS["15m"], pred=0.0, actual=10.0)
+
+    assert 1.0 - down._bias_by_step[HORIZON_STEPS["15m"]] > up._bias_by_step[HORIZON_STEPS["15m"]] - 1.0
+
+
 def test_orchestrator_reset_tracking_resets_feedback():
-    from orchestrator import Orchestrator
+    from src.core.orchestrator import Orchestrator
 
     orch = Orchestrator()
     engine = orch._advection_engine

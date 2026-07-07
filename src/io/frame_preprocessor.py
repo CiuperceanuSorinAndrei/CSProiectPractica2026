@@ -1,13 +1,4 @@
-"""Preprocesare stateless a unui cadru cu netCDF4 brut (fara overhead-ul xarray).
-
-Aceleasi operatii ca vechea cale xarray (crop -> proiectie -> detectie -> filtrare), dar
-deschidem fisierul direct cu netCDF4 si citim DOAR fereastra (hyperslab) ceruta. xarray
-construia tot Dataset-ul si decoda CF la fiecare deschidere (~280 ms/cadru); aici costul
-scade la ~10-20 ms/cadru. Valorile rezultate sunt identice cu cele din calea xarray.
-
-Functiile sunt stateless, folosite atat de foreground (work-steal la cache-miss) cat si de
-thread-ul de warm-up din fundal. Modulul traieste in radacina (langa orchestrator.py) ca sa
-nu antreneze __init__-ul pachetului dashboard (import circular).
+"""Stateless preprocessing of a raw netCDF4 frame .
 """
 from __future__ import annotations
 
@@ -19,14 +10,12 @@ import netCDF4
 
 from src.geo.projection import GeoProjection
 from src.core.detection.storm_cell_detector import StormCellDetector
-from config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
+from src.config import RAIN_THRESHOLD_MIN, RAIN_THRESHOLD_TRACKING
 
 
 @dataclass
 class FrameGeometry:
-    """Geometrie derivata din (bbox, centru, raza) + grila fixa a satelitului. Identica pentru
-    toate cadrele cu aceeasi vizualizare, deci se calculeaza o singura data (grid-reuse).
-    Contine si slice-urile de crop, ca sa citim doar fereastra de interes din fiecare fisier."""
+    """Geometry derived from (bbox, center, radius) + the fixed satellite grid."""
     lon_grid: np.ndarray
     lat_grid: np.ndarray
     pixel_area_km2: np.ndarray
@@ -40,18 +29,18 @@ from src.core.domain import StormCell
 
 @dataclass
 class FramePrep:
-    """Rezultatul etapei stateless de preprocesare a unui cadru (memoizabil per fisier)."""
+    """The result of the stateless preprocessing stage of a frame."""
     rain_rate: np.ndarray
     filtered_cells: list[StormCell]
     max_rain: float
 
 
-# Detector stateless, reutilizat pentru toate cadrele.
+# Stateless detector, reused for all frames.
 _detector = StormCellDetector(threshold=RAIN_THRESHOLD_TRACKING, min_size=2)
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
-    """Distanta Haversine (km) intre un punct fix si un grid de puncte."""
+    """Haversine distance (km) between a fixed point and a grid of points."""
     R = 6371.0
     lat1r, lon1r = np.radians(lat1), np.radians(lon1)
     lat2r, lon2r = np.radians(lat2), np.radians(lon2)
@@ -61,7 +50,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: np.ndarray, lon2: np.ndarray) 
 
 
 def _read_grid_and_proj(file_path: str):
-    """Citeste coordonatele grilei (nx, ny) si atributele proiectiei geostationare."""
+    """Reads grid coordinates (nx, ny) and geostationary projection attributes."""
     ds = netCDF4.Dataset(file_path)
     try:
         nx = np.asarray(ds.variables["nx"][:])
@@ -74,15 +63,14 @@ def _read_grid_and_proj(file_path: str):
 
 
 def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: float, polygon=None) -> FrameGeometry | None:
-    """Construieste geometria (slice-uri crop, grile Lon/Lat, ROI, arie pixel) dintr-un fisier
-    exemplu. Grila satelitului e fixa, deci e valabila pentru toate cadrele cu aceeasi geometrie.
-    Intoarce None daca bbox-ul cade in afara imaginii satelitului."""
+    """Builds the geometry (crop slices, Lon/Lat grids, ROI, pixel area) from a sample file.
+    Returns None if the bbox falls outside the satellite image."""
     lon_min, lon_max, lat_min, lat_max = bbox
     center_lat, center_lon = center
     nx, ny, proj = _read_grid_and_proj(file_path)
     h = proj["perspective_point_height"]
 
-    # bbox geografic -> limite (metri) pe proiectia geostationara
+    # Geographic bbox -> bounds (meters) on the geostationary projection
     transformer = GeoProjection.latlon_to_satellite(proj)
     xs, ys = transformer.transform([lon_min, lon_max, lon_min, lon_max],
                                    [lat_min, lat_min, lat_max, lat_max])
@@ -93,7 +81,7 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
     x_idx = np.where((x_vals >= x_min_m) & (x_vals <= x_max_m))[0]
     y_idx = np.where((y_vals >= y_min_m) & (y_vals <= y_max_m))[0]
     if len(x_idx) == 0 or len(y_idx) == 0:
-        return None  # in afara imaginii satelitului
+        return None  # outside the satellite image
 
     x_slice = slice(int(x_idx[0]), int(x_idx[-1]) + 1)
     y_slice = slice(int(y_idx[0]), int(y_idx[-1]) + 1)
@@ -121,8 +109,7 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
 
 
 def _read_rain_window(file_path: str, y_slice: slice, x_slice: slice) -> np.ndarray | None:
-    """Citeste doar fereastra de ploaie (rr[y_slice, x_slice]), decodand fill-ul ca NaN
-    (identic cu xarray)."""
+    """Reads only the rain window (rr[y_slice, x_slice]), decoding the fill as NaN"""
     ds = netCDF4.Dataset(file_path)
     try:
         data = ds.variables["rr"][y_slice, x_slice]  # masked array (auto mask+scale, default)
@@ -134,8 +121,8 @@ def _read_rain_window(file_path: str, y_slice: slice, x_slice: slice) -> np.ndar
 
 
 def preprocess(file_path: str, geom: FrameGeometry, bbox: tuple) -> FramePrep | None:
-    """Citeste fereastra de ploaie + detectie celule + filtrare la BBox -> FramePrep.
-    Intoarce None daca fisierul nu poate fi citit."""
+    """Reads rain window + cell detection + BBox filtering -> FramePrep.
+    Returns None if the file cannot be read."""
     rr = _read_rain_window(file_path, geom.y_slice, geom.x_slice)
     if rr is None:
         return None

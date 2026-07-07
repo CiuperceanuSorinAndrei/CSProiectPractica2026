@@ -1,9 +1,9 @@
 import argparse
-import os
 import sys
+from pathlib import Path
+from typing import Optional, Any
 
-# Asiguram ca directorul src poate fi gasit
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(str(Path(__file__).resolve().parent))
 
 from src.core.constants import HORIZON_NAMES
 from src.dashboard.constants import DATA_DIR
@@ -55,7 +55,7 @@ def run_simulation(
     center: tuple[float, float],
     start_str: str,
     end_str: str,
-    polygon=None,
+    polygon: Optional[Any] = None,
     radius_km: float = 30.0,
     quiet: bool = False,
 ):
@@ -75,7 +75,6 @@ def run_simulation(
     session_manager = SessionManager()
     session_id = f"test_{location_name}_{start_str}_{end_str}"
 
-    # Rulam primul cadru pentru initializare
     session_manager.process_to_frame(
         session_id=session_id,
         frame_idx=0,
@@ -89,7 +88,6 @@ def run_simulation(
         store=store,
     )
 
-    # Rulam toate cadrele folosind _accumulate_range (acelasi flux ca la salt)
     orch, hist = session_manager.get_state(session_id)
 
     for i in range(1, len(files)):
@@ -114,8 +112,8 @@ def run_simulation(
     actual_by_horizon = {}
     predicted_by_horizon = {}
     if not quiet:
-        print("\nAcumulare Precipitatii Bazin")
-        print("Orizont | Realizat (L/m2) | Prezis (L/m2) | Bias (%)")
+        print("\nBasin Precipitation Accumulation")
+        print("Horizon | Actual (L/m2) | Predicted (L/m2) | Bias (%)")
     for horizon in HORIZON_NAMES:
         real_vol, pred_vol = hist.volume_sums(horizon)
         actual_by_horizon[horizon] = real_vol
@@ -126,10 +124,10 @@ def run_simulation(
 
     metrics = hist.get_reliability_metrics()
     if not quiet:
-        print("\nIncredere Avertizari Bazin (Acuratete Volum Cumulat)")
+        print("\nBasin Warning Reliability (Cumulative Volume Accuracy)")
         for t in [1.0, 5.0]:
-            print(f"Acumulare > {t} L/m2:")
-            print("Orizont | POD | FAR | CMAPE")
+            print(f"Accumulation > {t} L/m2:")
+            print("Horizon | POD | FAR | CMAPE")
             for horizon in HORIZON_NAMES:
                 m = metrics[t][horizon]
                 print(f"{horizon:7} | {m['pod']:3.0f}% | {m['far']:3.0f}% | +/-{m['cmae']:.1f}%")

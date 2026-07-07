@@ -1,4 +1,4 @@
-"""Builder pentru metricile si rapoartele HTML din Dashboard."""
+"""Builder for metrics and HTML reports in the Dashboard."""
 from dash import html
 import dash_bootstrap_components as dbc
 from src.core.constants import HORIZON_NAMES
@@ -10,23 +10,18 @@ class ReportBuilder:
 
     @staticmethod
     def _avg_metric(hist, key: str, horizon: str) -> float:
-        """Media valorilor strict pozitive pentru o metrica (csi/far/pod/fss) la un orizont dat."""
+        """Average of strictly positive values for a metric (csi/far/pod/fss) at a given horizon."""
         vals = [m.get(horizon, 0) for m in hist.metrics_history[key] if m.get(horizon, 0) > 0]
         return sum(vals) / len(vals) if vals else 0.0
 
     @staticmethod
     def _with_fill_pct(value_str: str, map_mm: float, reservoir: dict | None):
-        """Ataseaza sub valoarea afisata (L/m²) procentul din volumul maxim al lacului.
-
-        Cand nu e selectat un lac (mod oras/cerc) sau ii lipseste capacitatea, intoarce doar
-        textul original -> cardul ramane neschimbat in acele moduri.
-        """
         pct = ReservoirFillEstimator.fill_percentage_for(map_mm, reservoir)
         if pct is None:
             return value_str
         return [
             value_str,
-            html.Div(f"{pct:.2f}% din volum maxim", className="small text-muted fw-normal mt-1"),
+            html.Div(f"{pct:.2f}% of max volume", className="small text-muted fw-normal mt-1"),
         ]
 
     @staticmethod
@@ -45,13 +40,12 @@ class ReportBuilder:
             f"2h: {vols.get('2h', 0):.2f} L/m²"
         )
 
-        # Sub metricile de volum (L/m²) afisam procentul din volumul maxim al lacului selectat.
-        # Istoricul foloseste MAP-ul acumulat; curentul/anticipatul folosesc valoarea proprie.
+        # Below the volume metrics (L/m²) we display the percentage of the selected reservoir's max volume.
+        # History uses the accumulated MAP; current/predicted use their own value.
         hist_vol_str = ReportBuilder._with_fill_pct(hist_vol_str, hist.total_map_mm, reservoir)
         curr_vol_str = ReportBuilder._with_fill_pct(curr_vol_str, curr_vol, reservoir)
         pred_vol_str = ReportBuilder._with_fill_pct(pred_vol_str, vols.get("1h", 0.0), reservoir)
 
-        max_rain_str = f"{result.max_rain:.2f}"
         from dash import html
         pred_vol_str = html.Span([
             html.Span(f"{vols.get('15m', 0):.2f} "), html.Small("15m", className="text-muted me-2", style={"fontSize": "0.6em"}),
@@ -62,9 +56,9 @@ class ReportBuilder:
         max_rain_str = f"{result.max_rain:.2f}"
 
         tracked = f"{result.num_tracked} Active"
-        in_roi = "Nu"
+        in_roi = "No"
         if curr_vol > 0:
-            in_roi = "Da (Ploaie detectată)"
+            in_roi = "Yes (Rain detected)"
 
         return hist_vol_str, curr_vol_str, pred_vol_str, max_rain_str, tracked, in_roi
 
@@ -83,7 +77,7 @@ class ReportBuilder:
                 
                 # Calculate direction
                 if vx == 0 and vy == 0:
-                    direction = "Staționar"
+                    direction = "Stationary"
                 else:
                     angle = math.degrees(math.atan2(-vy, vx)) # -vy because image Y is down
                     if angle < 0: angle += 360
@@ -93,36 +87,36 @@ class ReportBuilder:
                 # Trend
                 trend = cell.get("volume_trend", 1.0)
                 if trend > 1.05:
-                    trend_str = "În creștere"
+                    trend_str = "Increasing"
                 elif trend < 0.95:
-                    trend_str = "În scădere"
+                    trend_str = "Decreasing"
                 else:
-                    trend_str = "Stabilă"
+                    trend_str = "Stable"
                     
                 # Phase
                 phase = cell.get("lifecycle_phase", "MATURITY")
-                phase_map = {"FORMATION": "Formare", "MATURITY": "Maturitate", "DISSIPATION": "Disipare", "ACTIVE": "Activă"}
-                phase_ro = phase_map.get(phase, phase.capitalize())
+                phase_map = {"FORMATION": "Formation", "MATURITY": "Maturity", "DISSIPATION": "Dissipation", "ACTIVE": "Active"}
+                phase_en = phase_map.get(phase, phase.capitalize())
                 
                 rows.append(html.Tr([
                     html.Td(short_id),
                     html.Td(f"{speed_kmh:.0f} km/h"),
                     html.Td(direction),
-                    html.Td(phase_ro),
+                    html.Td(phase_en),
                     html.Td(trend_str),
                 ]))
         if not rows:
-            return html.Div(html.I("Nu există celule active în acest moment."), className="text-muted small")
+            return html.Div(html.I("No active cells at this moment."), className="text-muted small")
         return html.Div([
-            html.H6("Telemetrie Furtuni Active", className="fw-bold text-primary"),
+            html.H6("Active Storms Telemetry", className="fw-bold text-primary"),
             dbc.Table(
                 [
                     html.Thead(html.Tr([
-                        html.Th("ID Furtună"),
-                        html.Th("Viteză"),
-                        html.Th("Direcție"),
-                        html.Th("Stadiu"),
-                        html.Th("Evoluție Intensitate"),
+                        html.Th("Storm ID"),
+                        html.Th("Speed"),
+                        html.Th("Direction"),
+                        html.Th("Stage"),
+                        html.Th("Intensity Evolution"),
                     ])),
                     html.Tbody(rows),
                 ],
@@ -133,7 +127,7 @@ class ReportBuilder:
 
     @staticmethod
     def _build_kinematic_rows(hist) -> list:
-        """Randuri tabel cu mediile CSI/FAR/POD/FSS pe orizonturi (performanta cinematica)."""
+        """Table rows with average CSI/FAR/POD/FSS across horizons."""
         rows = []
         for horizon in HORIZON_NAMES:
             c = ReportBuilder._avg_metric(hist, "csi", horizon)
@@ -149,7 +143,7 @@ class ReportBuilder:
 
     @staticmethod
     def _build_volume_rows(hist) -> list:
-        """Randuri tabel cu MAP (L/m²) real vs prezis acumulat per orizont (aliniat corect in timp)."""
+        """Table rows with real vs predicted accumulated MAP (L/m²) per horizon."""
         vol_rows = []
 
         for horizon in HORIZON_NAMES:
@@ -168,19 +162,17 @@ class ReportBuilder:
         if hist.frames_processed == 0:
             return None
 
-        # Afișăm raportul doar la final pentru HISTORIC, dar continuu pentru LIVE
         if run_mode == "historic" and frame_idx < total_frames - 1:
             return None
 
         vol_rows = ReportBuilder._build_volume_rows(hist)
 
-        # Măsurăm fiabilitatea (Multi-Thresholds)
         reliability = hist.get_reliability_metrics()
         rel_rows = []
         for t, metrics in reliability.items():
-            # Pentru fiecare prag, afisam o linie speciala de antet
+            # For each threshold, display a special header row
             rel_rows.append(html.Tr([
-                html.Td(f"Acumulare > {t} L/m²", colSpan=4, className="fw-bold bg-secondary text-light text-center")
+                html.Td(f"Accumulation > {t} L/m²", colSpan=4, className="fw-bold bg-secondary text-light text-center")
             ]))
             for horizon in HORIZON_NAMES:
                 pod = metrics[horizon]["pod"]
@@ -193,36 +185,36 @@ class ReportBuilder:
                     html.Td(f"± {cmae:.1f}%" if cmae > 0 else "-")
                 ]))
 
-        title_text = "Performanță Live (Statistici Cumulate)" if run_mode == "live" else "Simulare Istorică Încheiată (Hydrological Mode)"
+        title_text = "Live Performance (Cumulative Stats)" if run_mode == "live" else "Historic Simulation Finished (Hydrological Mode)"
         alert_color = "info" if run_mode == "live" else "success"
 
         return html.Div([
             dbc.Alert(
                 [
                     html.H4(title_text, className="alert-heading fw-bold"),
-                    html.P("Performanța Volumetrică la nivel de bazin:"),
+                    html.P("Catchment Level Volumetric Performance:"),
                     html.Hr(),
-                    html.H6("Acumulare Precipitații Bazin", className="fw-bold mt-3"),
+                    html.H6("Catchment Precipitation Accumulation", className="fw-bold mt-3"),
                     dbc.Table([
                         html.Thead(html.Tr([
-                            html.Th("Orizont Acumulare"), 
-                            html.Th("Realizat (L/m²)"), 
-                            html.Th("Prezis (L/m²)"), 
+                            html.Th("Accumulation Horizon"), 
+                            html.Th("Actual (L/m²)"), 
+                            html.Th("Predicted (L/m²)"), 
                             html.Th("Volumetric Bias (MAPE %)")
                         ])),
                         html.Tbody(vol_rows)
                     ], bordered=True, color="dark", hover=True, size="sm", className="mb-4"),
-                    html.H6("Încredere Avertizări Bazin (Acuratețe Volum Cumulat)", className="fw-bold mt-3"),
+                    html.H6("Catchment Warning Confidence (Cumulative Volume Accuracy)", className="fw-bold mt-3"),
                     dbc.Table([
                         html.Thead(html.Tr([
-                            html.Th("Orizont"), 
-                            html.Th("Succes (POD)"), 
-                            html.Th("Alarme False (FAR)"),
-                            html.Th("Eroare (CMAPE)")
+                            html.Th("Horizon"), 
+                            html.Th("Success (POD)"), 
+                            html.Th("False Alarms (FAR)"),
+                            html.Th("Error (CMAPE)")
                         ])),
                         html.Tbody(rel_rows)
                     ], bordered=True, color="dark", hover=True, size="sm", className="mb-2"),
-                    html.Small("*CMAPE = Eroare Procentuală Medie pe Interval (doar când se confirmă ploaia).", className="text-muted d-block mt-1")
+                    html.Small("*CMAPE = Conditional Mean Absolute Percentage Error (only when rain is confirmed).", className="text-muted d-block mt-1")
                 ],
                 color=alert_color,
             )

@@ -14,9 +14,12 @@ class AdvectionEngine:
     _MIN_FEEDBACK_MM = 0.02
     _BIAS_MIN = 0.45
     _BIAS_MAX = 1.60
-    _BIAS_ALPHA = 0.18
+    _BIAS_ALPHA_UP = 0.14
+    _BIAS_ALPHA_DOWN = 0.30
     _DRY_DECAY = 0.003
     _WINDOW_SIZE = 9
+    _DRY_GUARD_RECENT_MM = 0.03
+    _DRY_GUARD_PRED_MAX = 0.20
 
     def __init__(
         self,
@@ -86,8 +89,10 @@ class AdvectionEngine:
         self._ratio_windows[step].append(log_ratio)
         target = float(np.exp(np.median(self._ratio_windows[step])))
         current = self._bias_by_step[step]
+        alpha_up = 0.081 if step == HORIZON_STEPS["2h"] else self._BIAS_ALPHA_UP
+        alpha = self._BIAS_ALPHA_DOWN if target < current else alpha_up
         self._bias_by_step[step] = float(np.clip(
-            (1.0 - self._BIAS_ALPHA) * current + self._BIAS_ALPHA * target,
+            (1.0 - alpha) * current + alpha * target,
             self._BIAS_MIN,
             self._BIAS_MAX,
         ))
@@ -130,12 +135,28 @@ class AdvectionEngine:
     @staticmethod
     def _centroid_confidence(cells: list[StormCell], roi_scale: float) -> float:
         if not cells:
-            return 1.0
-        centroid_errors = [float(getattr(c, "prediction_error_pixels", 0.0) or 0.0) for c in cells]
-        size_errors = [abs(float(getattr(c, "size_error_percent", 0.0) or 0.0)) for c in cells]
+            return 0.0
+        centroid_errors = [c.prediction_error_pixels for c in cells]
+        size_errors = [abs(c.size_error_percent) for c in cells]
         centroid_penalty = np.median(centroid_errors) / max(roi_scale * 0.35, 1.0)
         size_penalty = np.median(size_errors) / 100.0
         return float(np.clip(1.0 - max(centroid_penalty, size_penalty), 0.0, 1.0))
+
+    @staticmethod
+    def _mass_weighted_velocity(cells: list[StormCell]) -> tuple[float, float]:
+        if not cells:
+            return 0.0, 0.0
+        weights = [max(c.volume, 1e-6) for c in cells]
+        return (
+            float(np.average([c.v_x for c in cells], weights=weights)),
+            float(np.average([c.v_y for c in cells], weights=weights)),
+        )
+
+    def _recent_actual_is_dry(self) -> bool:
+        if not self._error_history:
+            return False
+        recent = self._error_history[-min(3, len(self._error_history)):]
+        return float(np.mean([item["actual"] for item in recent])) < self._DRY_GUARD_RECENT_MM
 
     def _velocity_for_step(
         self,
@@ -147,12 +168,12 @@ class AdvectionEngine:
         cy, cx = roi_center
         weights = []
         for c in cells:
-            cell_x = float(getattr(c, "centroid_x", 0.0))
-            cell_y = float(getattr(c, "centroid_y", 0.0))
-            vel_x = float(getattr(c, "v_x", 0.0))
-            vel_y = float(getattr(c, "v_y", 0.0))
-            pred_x = float(getattr(c, "centroid_x", 0.0) + getattr(c, "v_x", 0.0) * step)
-            pred_y = float(getattr(c, "centroid_y", 0.0) + getattr(c, "v_y", 0.0) * step)
+            cell_x = c.centroid_x
+            cell_y = c.centroid_y
+            vel_x = c.v_x
+            vel_y = c.v_y
+            pred_x = c.centroid_x + c.v_x * step
+            pred_y = c.centroid_y + c.v_y * step
             dist = ((pred_x - cx) ** 2 + (pred_y - cy) ** 2) ** 0.5
             proximity = 1.0 / (1.0 + (dist / roi_scale) ** 2)
             to_roi_x = cx - cell_x
@@ -161,7 +182,7 @@ class AdvectionEngine:
             vel_len = max((vel_x ** 2 + vel_y ** 2) ** 0.5, 1e-6)
             direction = (vel_x * to_roi_x + vel_y * to_roi_y) / (vel_len * to_roi_len)
             direction_weight = 0.15 if direction < 0.0 else 0.5 + 0.5 * direction
-            mass = max(float(getattr(c, "volume", 0.0) or 0.0), 1e-6)
+            mass = max(c.volume, 1e-6)
             weights.append(mass * proximity * direction_weight)
 
         vx = self._weighted_median([c.v_x for c in cells], weights) if cells else 0.0
@@ -196,16 +217,13 @@ class AdvectionEngine:
             cy, cx, roi_scale = self._roi_center_and_scale(rain_rate.shape, roi_mask)
         centroid_confidence = self._centroid_confidence(relevant_cells, roi_scale)
         
-        # 2. Extragem starea termodinamica curenta folosind Volumele REALE (masa reala de apa)
-        # Celulele sunt ponderate dupa masa, distanta si directia catre ROI.
         mean_E = np.average(
-            [max(getattr(c, 'volume', 1.0), 1e-6) for c in relevant_cells],
+            [max(c.volume, 1e-6) for c in relevant_cells],
             weights=relevant_weights,
         ) if relevant_cells else 1.0
         
-        # dE real = Volumul curent - Volumul precedent (pe baza la volume_trend)
         mean_dE = np.average([
-            getattr(c, 'volume', 0.0) - (getattr(c, 'volume', 0.0) / max(getattr(c, 'volume_trend', 1.0), 1e-5)) 
+            c.volume - (c.volume / max(c.volume_trend, 1e-5)) 
             for c in relevant_cells
         ], weights=relevant_weights) if relevant_cells else 0.0
         
@@ -217,37 +235,52 @@ class AdvectionEngine:
         thermo_multiplier = 1.0
         
         for step in range(1, max_step + 1):
-            global_vx, global_vy, _, _ = self._velocity_for_step(
+            roi_vx, roi_vy, step_cells, step_weights = self._velocity_for_step(
                 simulated_cells, step, (cy, cx), roi_scale
             )
+            mass_vx, mass_vy = self._mass_weighted_velocity(step_cells)
+            count_confidence = min(len(step_cells) / 3.0, 1.0)
+            roi_confidence = float(np.clip(np.mean(step_weights), 0.0, 1.0)) if step_weights else 0.0
+            tracking_confidence = centroid_confidence * (0.35 + 0.35 * count_confidence + 0.30 * roi_confidence)
             
             # Advectie uniforma prin shiftare scipy
-            shift_y = step * global_vy
-            shift_x = step * global_vx
+            shift_y = step * roi_vy
+            shift_x = step * roi_vx
             
             shifted_raw = self.kinematic_advector.advect(
                 rain_rate, shift_y, shift_x
             )
+            mass_shifted = self.kinematic_advector.advect(
+                rain_rate, step * mass_vy, step * mass_vx
+            )
+            damped_shifted = 0.90 * self.kinematic_advector.advect(
+                rain_rate, step * roi_vy * 0.50, step * roi_vx * 0.50
+            )
             
-            # Masa aflata efectiv pe ecran (include scaderea naturala la margini)
+            # Leave pixels unaltered. Thresholding is applied later by Evaluator.
+            damped_weight = 0.35 * (1.0 - tracking_confidence)
+            mass_weight = 0.25 * tracking_confidence
+            roi_weight = max(1.0 - damped_weight - mass_weight, 0.0)
+            total_weight = roi_weight + mass_weight + damped_weight
+            shifted = (
+                shifted_raw * roi_weight
+                + mass_shifted * mass_weight
+                + damped_shifted * damped_weight
+            ) / max(total_weight, 1e-6)
             
-            # Lăsăm pixelii nealterați. Pragul va fi aplicat corect doar de Evaluator, 
-            # DUPĂ ce PID-ul și Termodinamica au scalat complet furtuna. 
-            # Aceasta previne Efectul de Clichet Asimetric (pierderea sistematică de masă la margini).
-            lead_weight = (step - 1) / max(max_step - 1, 1)
-            persistence_blend = 0.60 * (1.0 - centroid_confidence) * lead_weight
-            damped_persistence = np.minimum(shifted_raw, rain_rate)
-            shifted = shifted_raw * (1.0 - persistence_blend) + damped_persistence * persistence_blend
-            
-            # 1. Conservarea Masei a fost stearsa (Nu dorim compensarea ploilor usoare sterse).
-            # Ploaia stearsa la prag ramane stearsa, evitand inflatia artificiala a nucleelor severe.
-            
-            # 2. Simulăm pasul termodinamic organic (care are limite fizice absolute in reaction_diffusion.py)
+            # Mass conservation omitted to avoid artificially inflating severe cores.
+            # Simulate organic thermodynamic step
             current_E, current_dE, R_step = update_energy(current_E, np.array([]), current_dE)
             thermo_multiplier *= R_step
             
-            # Bias-ul online corecteaza doar volumele cumulate afisate, nu campul fizic advectat.
+            # Online bias corrects only displayed cumulative volumes, not advected physical field
             shifted = shifted * thermo_multiplier
+            if (
+                tracking_confidence < 0.35
+                and self._recent_actual_is_dry()
+                and float(np.nanmean(shifted)) < self._DRY_GUARD_PRED_MAX
+            ):
+                shifted = shifted * 0.35
             
             float_preds[step] = shifted
             
