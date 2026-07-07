@@ -1,13 +1,13 @@
-"""Pachet core: detectie celule, tracking cinematic, nowcasting si metrici de validare.
+"""Core package: cell detection, kinematic tracking, nowcasting, and validation metrics.
 
-Sub-pachete:
-  - detection: detectie celule intr-un singur cadru
-  - tracking:  matching KD-Tree + filtre Kalman + optical flow + lifecycle
-  - nowcast:   extrapolare prin advectie + energetica Reaction-Diffusion
-  - metrics:   scoruri de validare (CSI/FAR/POD/FSS) + integrare volumetrica
-  - pipeline:  orchestrare per-cadru + cache de preprocesare
+Sub-packages:
+  - detection: single-frame cell detection
+  - tracking:  KD-Tree matching + Kalman filters + optical flow + lifecycle
+  - nowcast:   advection extrapolation + Reaction-Diffusion energetics
+  - metrics:   validation scores (CSI/FAR/POD/FSS) + volumetric integration
+  - pipeline:  per-frame orchestration + preprocessing cache
 
-`domain` (StormCell) ramane la radacina, fiind partajat de toate sub-pachetele.
+`domain` (StormCell) remains at root, shared by all sub-packages.
 """
 from .detection.storm_cell_detector import StormCellDetector
 from .tracking.storm_tracker import StormTracker

@@ -155,4 +155,5 @@ if __name__ == "__main__":
 
     print(f"Celule detectate: {len(cells)}")
     for cell in cells:
-        print({k: v for k, v in cell.items() if k != "coords"}, "| coords:", len(cell["coords"]))
+        data = cell.as_dict()
+        print({k: v for k, v in data.items() if k != "coords"}, "| coords:", len(cell.coords))

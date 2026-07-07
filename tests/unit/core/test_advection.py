@@ -19,6 +19,17 @@ def test_advection_extrapolate_nan_handling():
     
     # float_preds[1] shouldn't contain any NaNs
     assert not np.isnan(float_preds[1]).any()
+
+
+def test_advection_does_not_mutate_source_rain_rate():
+    rain_rate = np.zeros((10, 10))
+    rain_rate[5, 5] = np.nan
+
+    _create_engine().extrapolate(
+        rain_rate, tracked_cells=[], horizons=[(1, "15m")]
+    )
+
+    assert np.isnan(rain_rate[5, 5])
     
 def test_tracked_cell_advection_shape_and_nan_bounds():
     cell = StormCell(
@@ -174,10 +185,17 @@ def test_unreliable_centroids_blend_later_steps_toward_persistence():
     )
     engine = _create_engine()
 
+    def center_of_mass_x(arr):
+        x_indices = np.arange(arr.shape[1])
+        return np.sum(arr * x_indices) / (np.sum(arr) + 1e-6)
+
     reliable_pred = engine.extrapolate(rain_rate, [reliable], [(2, "15m")])[2]
     unreliable_pred = engine.extrapolate(rain_rate, [unreliable], [(2, "15m")])[2]
 
-    assert np.sum(np.abs(unreliable_pred - rain_rate)) < np.sum(np.abs(reliable_pred - rain_rate))
+    reliable_dx = center_of_mass_x(reliable_pred) - 10
+    unreliable_dx = center_of_mass_x(unreliable_pred) - 10
+
+    assert unreliable_dx < reliable_dx
 
 
 def test_low_tracking_confidence_damps_without_raw_persistence():

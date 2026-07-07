@@ -29,6 +29,7 @@ class CloudDataService:
         self._ftp_client = FtpClient(
             s.host, s.username, s.password, s.remote_dir, s.local_dir,
             timeout=FTP_TIMEOUT, max_retries=FTP_MAX_RETRIES,
+            allow_plaintext_fallback=True
         )
 
     # Remote filename of a frame, following the configured strftime pattern.

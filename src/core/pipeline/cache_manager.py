@@ -36,7 +36,7 @@ class CacheManager:
 
     def get_frame_prep(
         self, file_path: str, lon_min: float, lon_max: float, lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None
+        center_lat: float, center_lon: float, radius_km: float, polygon=None, catchment_polygon=None
     ) -> FramePrep | None:
         geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
         if geom_key != self._geom_key:
@@ -50,16 +50,16 @@ class CacheManager:
             return cached
 
         return self._compute_prep(
-            file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon
+            file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon, catchment_polygon
         )
 
     def _compute_prep(
         self, file_path: str, lon_min: float, lon_max: float, lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None
+        center_lat: float, center_lon: float, radius_km: float, polygon=None, catchment_polygon=None
     ) -> FramePrep | None:
         bbox = (lon_min, lon_max, lat_min, lat_max)
         if self._geom is None:
-            self._geom = compute_geometry(file_path, bbox, (center_lat, center_lon), radius_km, polygon=polygon)
+            self._geom = compute_geometry(file_path, bbox, (center_lat, center_lon), radius_km, polygon=polygon, catchment_polygon=catchment_polygon)
             if self._geom is None:
                 return None
         prep = preprocess(file_path, self._geom, bbox)
@@ -72,7 +72,7 @@ class CacheManager:
 
     def start_warmup(
         self, file_paths: list[str], lon_min: float, lon_max: float, lat_min: float, lat_max: float,
-        center_lat: float, center_lon: float, radius_km: float, polygon=None
+        center_lat: float, center_lon: float, radius_km: float, polygon=None, catchment_polygon=None
     ) -> None:
         geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
         with self._warm_lock:
@@ -84,7 +84,7 @@ class CacheManager:
                 if self._warm_thread and self._warm_thread.is_alive():
                     self._warm_thread.join(timeout=1.0)
             stop = threading.Event()
-            geom_args = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon)
+            geom_args = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon, catchment_polygon)
             self._warm_stop = stop
             self._warm_geom_key = geom_key
             self._warm_total = len(file_paths)

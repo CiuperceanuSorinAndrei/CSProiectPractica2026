@@ -62,9 +62,15 @@ def _read_grid_and_proj(file_path: str):
         ds.close()
 
 
-def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: float, polygon=None) -> FrameGeometry | None:
+def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: float, polygon=None, catchment_polygon=None) -> FrameGeometry | None:
     """Builds the geometry (crop slices, Lon/Lat grids, ROI, pixel area) from a sample file.
-    Returns None if the bbox falls outside the satellite image."""
+    Returns None if the bbox falls outside the satellite image.
+    
+    When a catchment_polygon is provided (reservoir mode with DEM-delineated catchment),
+    it is used for the fractional ROI mask instead of the lake polygon. This ensures the
+    Mean Areal Precipitation (MAP) is computed over the entire drainage area, not just
+    the lake surface.
+    """
     lon_min, lon_max, lat_min, lat_max = bbox
     center_lat, center_lon = center
     nx, ny, proj = _read_grid_and_proj(file_path)
@@ -99,7 +105,9 @@ def compute_geometry(file_path: str, bbox: tuple, center: tuple, radius_km: floa
     pixel_area_km2 = dx_km * dy_km
     if polygon is not None:
         from src.geo.intersection import PolygonIntersection
-        roi_mask_fractional = PolygonIntersection.create_fractional_mask(polygon, lon_grid, lat_grid)
+        # Use catchment polygon for MAP if available, otherwise lake polygon
+        roi_polygon = catchment_polygon if catchment_polygon is not None else polygon
+        roi_mask_fractional = PolygonIntersection.create_fractional_mask(roi_polygon, lon_grid, lat_grid)
         roi_mask = roi_mask_fractional > 0.0
     else:
         roi_mask = _haversine_km(center_lat, center_lon, lat_grid, lon_grid) <= radius_km

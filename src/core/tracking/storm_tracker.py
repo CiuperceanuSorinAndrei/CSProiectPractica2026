@@ -1,4 +1,4 @@
-"""Modul de cinematica: urmarire centroizi folosind filtru Kalman 8D si KD-Tree Matcher."""
+"""Kinematic module: centroid tracking using 8D Kalman filter and KD-Tree Matcher."""
 from __future__ import annotations
 
 import uuid
@@ -38,15 +38,15 @@ class StormTracker:
         # 2. Kalman predict (Constant Acceleration Model)
         self._kinematic_updater.predict_all()
 
-        # 3. Pregatim celulele (volum, intensitate, energie)
+        # 3. Prepare cells (volume, intensity, energy)
         self._prepare_current_cells(current_cells, rain_matrix)
 
-        # 4. Construim matricea de asocieri folosind KD-Tree
+        # 4. Build association matrix using KD-Tree
         matches = Matcher.match_cells(
             current_cells, self._previous_cells, self._kinematic_updater._kalman_bank, self._max_dist_pixels
         )
 
-        # 5. Procesam fiecare celula cu asocierea gasita
+        # 5. Process each cell with the found association
         for i, c_cell in enumerate(current_cells):
             tracked_cell = c_cell.clone()
             tracked_cell.is_tracked = False
@@ -62,7 +62,7 @@ class StormTracker:
 
             tracked_cells.append(tracked_cell)
 
-        # Cleanup: stergem filtrele Kalman pentru celulele moarte
+        # Cleanup: remove Kalman filters for dead cells
         self._kinematic_updater.cleanup_inactive(active_ids)
 
         self._previous_cells = tracked_cells
@@ -71,7 +71,7 @@ class StormTracker:
         return tracked_cells
 
     def _prepare_current_cells(self, current_cells: list[StormCell], rain_matrix: np.ndarray) -> None:
-        """Calculeaza volum, intensitate medie, energie (E) si masca pentru fiecare celula curenta."""
+        """Calculates volume, mean intensity, energy (E) and mask for each current cell."""
         for c_cell in current_cells:
             c_area = c_cell.area_pixels if c_cell.area_pixels else 1.0
 
@@ -90,7 +90,7 @@ class StormTracker:
 
 
     def _apply_matched_cell(self, c_cell: StormCell, tracked_cell: StormCell, best_match: StormCell) -> str:
-        """Asociere existenta: preia ID-ul parintelui, actualizeaza Kalman si transfera istoricul."""
+        """Existing association: inherit parent ID, update Kalman and transfer history."""
         c_area = tracked_cell.area_pixels
         c_volume = tracked_cell.volume
 
@@ -114,7 +114,7 @@ class StormTracker:
         return cell_id
 
     def _apply_new_or_split_cell(self, c_cell: StormCell, tracked_cell: StormCell) -> str:
-        """Celula noua sau SPLIT: genereaza ID, mosteneste viteza unui parinte si initializeaza Kalman."""
+        """New or SPLIT cell: generate ID, inherit parent's velocity and initialize Kalman."""
         c_area = tracked_cell.area_pixels
 
         cell_id = str(uuid.uuid4())[:8]
@@ -139,7 +139,7 @@ class StormTracker:
         return cell_id
 
     def _inherit_parent_velocity(self, c_cell: StormCell) -> tuple[float, float]:
-        """Pass 2: cel mai apropiat parinte urmarit doneaza viteza initiala (detectare SPLIT din orfani)."""
+        """Pass 2: closest tracked parent donates initial velocity (SPLIT detection from orphans)."""
         best_parent_dist = 1000.0
         inherited_vx, inherited_vy = 0.0, 0.0
 
@@ -153,7 +153,7 @@ class StormTracker:
             py = p_cell.predicted_centroid_y if p_cell.predicted_centroid_y else kf_parent.y
             dist = np.sqrt((c_cell.centroid_x - px) ** 2 + (c_cell.centroid_y - py) ** 2)
 
-            # Limita Mahalanobis 3-Sigma cu capat fizic
+            # Mahalanobis 3-Sigma limit with physical upper bound
             actual_limit = np.clip(np.sqrt(max(kf_parent.positional_uncertainty, 1.0)) * 3.0, 10.0, 30.0)
 
             if dist <= actual_limit and dist < best_parent_dist:
@@ -164,7 +164,7 @@ class StormTracker:
         return inherited_vx, inherited_vy
 
     def _predict_cell_mask(self, c_cell: StormCell, tracked_cell: StormCell) -> None:
-        """Prezice masca morfologica viitoare folosind doar Kalman velocity."""
+        """Predicts future morphological mask using only Kalman velocity."""
         shift_x = tracked_cell.v_x
         shift_y = tracked_cell.v_y
 
@@ -174,14 +174,14 @@ class StormTracker:
 
     @staticmethod
     def _finalize_cell_trend(tracked_cell: StormCell) -> None:
-        """Calculeaza trendul de arie, faza de viata (Phase 4) si eroarea de dimensiune prezisa.
+        """Calculates area trend, lifecycle phase (Phase 4) and predicted size error.
         
-        IMPORTANT: volume_trend (calculat din raportul volumelor reale) NU este suprascris.
-        area_trend (calculat din istoria ariei in pixeli) este folosit doar pentru predicted_area_pixels.
+        IMPORTANT: volume_trend (calculated from actual volume ratio) is NOT overwritten.
+        area_trend (calculated from pixel area history) is only used for predicted_area_pixels.
         """
         c_area = tracked_cell.area_pixels
 
-        # Area trend - folosit DOAR pentru predictia morfologica (marimea celulei)
+        # Area trend - used ONLY for morphological prediction (cell size)
         area_trend = CellLifecycleManager.compute_area_trend(tracked_cell)
 
         tracked_cell.lifecycle_phase = lifecycle(tracked_cell.E, tracked_cell.dE)

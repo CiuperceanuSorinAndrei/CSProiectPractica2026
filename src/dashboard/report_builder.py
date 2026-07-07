@@ -16,35 +16,78 @@ class ReportBuilder:
         return sum(vals) / len(vals) if vals else 0.0
 
     @staticmethod
-    def _fill_lines(value_str: str, map_mm: float, reservoir: dict | None, duration_hours: float | None = None,
-                    evap_mm_day: float = EVAP_MM_PER_DAY, outflow_m3s: float = RESERVOIR_OUTFLOW_M3S):
+    def _fill_lines(value_str: str, map_mm: float | dict, reservoir: dict | None, duration_hours: float | None = None,
+                    frame_time=None, context="total"):
+        
+        if context == "pred" and isinstance(map_mm, dict):
+            parts = []
+            for h in ["15m", "1h", "2h"]:
+                h_val = map_mm.get(h, 0.0)
+                res = ReservoirFillEstimator.estimate(h_val, reservoir, RUNOFF_COEFFICIENT, duration_hours=None, frame_time=frame_time)
+                if res:
+                    if res.overtops:
+                        parts.append(html.Li([html.Strong(f"{h} Forecast: "), html.Span(f"+{res.contribution_pct:.2f}% ➝ ⚠ OVERFLOW", className="text-danger fw-bold")]))
+                    else:
+                        parts.append(html.Li([html.Strong(f"{h} Forecast adds: "), f"+{res.contribution_pct:.2f}% capacity"]))
+            
+            if not parts:
+                return value_str
+            
+            children = [
+                value_str, 
+                html.Ul(parts, className="list-unstyled small mt-2 mb-0", style={"borderLeft": "2px solid #5bc0de", "paddingLeft": "10px"})
+            ]
+            return children
+
         res = ReservoirFillEstimator.estimate(
             map_mm, reservoir, RUNOFF_COEFFICIENT,
-            duration_hours=duration_hours, evap_mm_day=evap_mm_day, outflow_m3s=outflow_m3s)
+            duration_hours=duration_hours, frame_time=frame_time)
         if res is None:
             return value_str
 
         if res.level_source == "assumed_nnr":
-            parts = [f"NNR +{res.contribution_pct:.2f}% of volume"]
+            parts = [
+                html.Li([html.Strong("Base Volume: "), "Assumed NNR"]),
+                html.Li([html.Strong("Volume Added: "), f"+{res.contribution_pct:.2f}%"])
+            ]
             if res.delta_level_m is not None:
-                parts.append(f"{res.delta_level_m:+.2f} m")
+                parts.append(html.Li([html.Strong("Level Change: "), f"{res.delta_level_m:+.2f} m"]))
         elif res.new_fill_pct <= 100.0:
-            parts = [f"{res.start_fill_pct:.0f}% → {res.new_fill_pct:.0f}% of volume"]
+            if context == "total":
+                parts = [html.Li([html.Strong("Event Impact: "), f"{res.start_fill_pct:.0f}% ➝ {res.new_fill_pct:.0f}% filled"])]
+            elif context == "current":
+                parts = [html.Li([html.Strong("This frame adds: "), f"+{res.contribution_pct:.2f}% capacity"])]
+            
             if res.delta_level_m is not None:
-                parts.append(f"{res.delta_level_m:+.2f} m")
+                parts.append(html.Li([html.Strong("Level Change: "), f"{res.delta_level_m:+.2f} m"]))
         elif res.overtops:
-            parts = [f"{res.start_fill_pct:.0f}% → full ⚠ overflow (inflow {res.contribution_pct:.0f}% of volume)"]
+            if context == "total":
+                parts = [html.Li([html.Strong("Event Impact: "), html.Span(f"{res.start_fill_pct:.0f}% ➝ 100% ⚠ OVERFLOW", className="text-danger fw-bold")])]
+            else:
+                parts = [html.Li([html.Strong("Overflow ⚠: "), html.Span("Causes dam to overflow", className="text-danger fw-bold")])]
+            parts.append(html.Li([html.Strong("Excess Inflow: "), f"{res.contribution_pct:.0f}%"]))
         else:
-            parts = [f"{res.start_fill_pct:.0f}% → full (+{res.level_after_m:.2f} m above NNR)"]
+            if context == "total":
+                parts = [html.Li([html.Strong("Event Impact: "), f"{res.start_fill_pct:.0f}% ➝ 100%"])]
+            else:
+                parts = [html.Li([html.Strong("Impact: "), "Fills to 100%"])]
+            parts.append(html.Li([html.Strong("Level Change: "), f"Reaches {res.level_after_m:.2f} m over max level"]))
 
         losses = res.outflow_m3 + res.evap_m3
+        if res.inflow_m3 > 0.0 and res.level_source != "assumed_nnr":
+            parts.append(html.Li([html.Strong("Rain Inflow: "), html.Span(f"+{res.inflow_m3 / 1e6:.2f} mil m³", className="text-success")]))
+            
         if losses > 0.0 and res.level_source != "assumed_nnr":
-            parts.append(f"−{losses / 1e6:.2f} mil m³ outflows")
+            parts.append(html.Li([html.Strong("Losses (Evap/Outflow): "), html.Span(f"−{losses / 1e6:.2f} mil m³", className="text-warning")]))
 
-        children = [value_str, html.Div(" · ".join(parts), className="small text-muted fw-normal mt-1")]
         src = ReportBuilder._source_label(reservoir, res)
         if src:
-            children.append(html.Div(src, className="text-muted fw-normal", style={"fontSize": "0.7rem"}))
+            parts.append(html.Li([html.Strong("Source: "), html.Span(src, className="text-muted")]))
+
+        children = [
+            value_str, 
+            html.Ul(parts, className="list-unstyled small mt-2 mb-0", style={"borderLeft": "2px solid #5bc0de", "paddingLeft": "10px"})
+        ]
         return children
 
     @staticmethod
@@ -58,8 +101,7 @@ class ReportBuilder:
         return None
 
     @staticmethod
-    def format_metrics(session_id: str, result, session_manager: SessionManager, reservoir: dict | None = None,
-                       evap_mm_day: float = EVAP_MM_PER_DAY, outflow_m3s: float = RESERVOIR_OUTFLOW_M3S):
+    def format_metrics(session_id: str, result, session_manager: SessionManager, reservoir: dict | None = None, frame_time=None):
         _, hist = session_manager.get_state(session_id)
 
         hist_vol_str = f"{hist.total_map_mm:.2f} L/m²"
@@ -68,24 +110,20 @@ class ReportBuilder:
         curr_vol_str = f"{curr_vol:.2f} L/m²"
 
         vols = result.predicted_volumes_horizons
-        pred_vol_str = (
-            f"15m: {vols.get('15m', 0):.2f} | "
-            f"1h: {vols.get('1h', 0):.2f} | "
-            f"2h: {vols.get('2h', 0):.2f} L/m²"
-        )
-
+        
         # Below the volume metrics (L/m²) we display the percentage of the selected reservoir's max volume.
         event_hours = (hist.frames_processed or 0) * 0.25
-        hist_vol_str = ReportBuilder._fill_lines(hist_vol_str, hist.total_map_mm, reservoir, event_hours, evap_mm_day, outflow_m3s)
-        curr_vol_str = ReportBuilder._fill_lines(curr_vol_str, curr_vol, reservoir, None, evap_mm_day, outflow_m3s)
-        pred_vol_str = ReportBuilder._fill_lines(pred_vol_str, vols.get("1h", 0.0), reservoir, None, evap_mm_day, outflow_m3s)
+        hist_vol_str = ReportBuilder._fill_lines(hist_vol_str, hist.total_map_mm, reservoir, event_hours, frame_time, context="total")
+        curr_vol_str = ReportBuilder._fill_lines(curr_vol_str, curr_vol, reservoir, None, frame_time, context="current")
 
         from dash import html
-        pred_vol_str = html.Span([
+        pred_vol_base = html.Span([
             html.Span(f"{vols.get('15m', 0):.2f} "), html.Small("15m", className="text-muted me-2", style={"fontSize": "0.6em"}),
             html.Span(f"{vols.get('1h', 0):.2f} "), html.Small("1h", className="text-muted me-2", style={"fontSize": "0.6em"}),
             html.Span(f"{vols.get('2h', 0):.2f} "), html.Small("2h", className="text-muted", style={"fontSize": "0.6em"}),
         ])
+        
+        pred_vol_str = ReportBuilder._fill_lines(pred_vol_base, vols, reservoir, None, frame_time, context="pred")
 
         max_rain_str = f"{result.max_rain:.2f}"
 
@@ -191,7 +229,7 @@ class ReportBuilder:
         return vol_rows
 
     @staticmethod
-    def build_final_report(session_id: str, run_mode: str, frame_idx: int, total_frames: int, session_manager: SessionManager) -> html.Div | None:
+    def build_final_report(session_id: str, run_mode: str, frame_idx: int, total_frames: int, session_manager: SessionManager, reservoir: dict | None = None) -> html.Div | None:
         _, hist = session_manager.get_state(session_id)
         if hist.frames_processed == 0:
             return None
@@ -222,12 +260,33 @@ class ReportBuilder:
         title_text = "Live Performance (Cumulative Stats)" if run_mode == "live" else "Historic Simulation Finished (Hydrological Mode)"
         alert_color = "info" if run_mode == "live" else "success"
 
+        res_stats = []
+        if reservoir:
+            event_hours = hist.frames_processed * 0.25
+            res = ReservoirFillEstimator.estimate(hist.total_map_mm, reservoir, RUNOFF_COEFFICIENT, duration_hours=event_hours)
+            if res:
+                res_stats = [
+                    dbc.Card([
+                        dbc.CardHeader(html.H6("Final Reservoir Routing Summary", className="fw-bold mb-0 text-white")),
+                        dbc.CardBody([
+                            html.Ul([
+                                html.Li([html.Strong("Total Rain Inflow: "), html.Span(f"+{res.inflow_m3 / 1e6:.2f} mil m³", className="text-success")]),
+                                html.Li([html.Strong("Total Losses (Evap/Outflow): "), html.Span(f"−{(res.outflow_m3 + res.evap_m3) / 1e6:.2f} mil m³", className="text-warning")]),
+                                html.Li([html.Strong("Starting Level: "), f"{res.level_before_m if res.level_before_m is not None else 0:+.2f} m"]),
+                                html.Li([html.Strong("Final Simulated Level: "), f"{res.level_after_m if res.level_after_m is not None else 0:+.2f} m"]),
+                                html.Li([html.Strong("Total Level Change: "), html.Span(f"{res.delta_level_m if res.delta_level_m is not None else 0:+.2f} m", className="text-info fw-bold")])
+                            ], className="list-unstyled mb-0")
+                        ])
+                    ], color="dark", inverse=True, className="mb-3 border-secondary shadow-sm")
+                ]
+
         return html.Div([
             dbc.Alert(
                 [
-                    html.H4(title_text, className="alert-heading fw-bold"),
-                    html.P("Catchment Level Volumetric Performance:"),
-                    html.Hr(),
+                    html.H4(title_text, className="alert-heading fw-bold text-white"),
+                    html.P("Catchment Level Volumetric Performance:", className="text-white"),
+                    html.Hr(className="border-white"),
+                    *res_stats,
                     html.H6("Catchment Precipitation Accumulation", className="fw-bold mt-3"),
                     dbc.Table([
                         html.Thead(html.Tr([

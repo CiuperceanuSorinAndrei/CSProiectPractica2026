@@ -1,4 +1,4 @@
-"""Motor de advectie Rigid (Lagrangian Persistence)."""
+"""Rigid Advection Engine (Lagrangian Persistence)."""
 from __future__ import annotations
 
 from collections import deque
@@ -38,7 +38,6 @@ class AdvectionEngine:
             step: deque(maxlen=self._WINDOW_SIZE)
             for step in HORIZON_STEPS.values()
         }
-        self._sync_legacy_biases()
 
     def update_feedback(self, actual_map: float, preds: dict) -> None:
         """Update calibration from issued cumulative forecasts after they mature."""
@@ -58,8 +57,6 @@ class AdvectionEngine:
             pred = float(past["preds"].get(horizon, 0.0) or 0.0)
             actual = sum(item["actual"] for item in self._error_history[-step:])
             self._update_step_bias(step, pred, actual)
-
-        self._sync_legacy_biases()
 
     def correct_cumulative_volumes(self, volumes: dict[str, float]) -> dict[str, float]:
         return {
@@ -100,13 +97,6 @@ class AdvectionEngine:
     def _decay_step_bias(self, step: int) -> None:
         current = self._bias_by_step[step]
         self._bias_by_step[step] = current + (1.0 - current) * self._DRY_DECAY
-
-    def _sync_legacy_biases(self) -> None:
-        self._bias_15m = self._bias_by_step[HORIZON_STEPS["15m"]]
-        self._bias_1h = self._bias_by_step[HORIZON_STEPS["1h"]]
-        self._bias_2h = self._bias_by_step[HORIZON_STEPS["2h"]]
-        self.dynamic_bias_correction = 1.0
-        self._pid_bias = 1.0
 
     @staticmethod
     def _weighted_median(values: list[float], weights: list[float]) -> float:
@@ -196,8 +186,8 @@ class AdvectionEngine:
         horizons: list[tuple[int, str]],
         roi_mask: np.ndarray = None,
     ) -> dict[int, np.ndarray]:
-        """Extrapoleaza precipitatiile (Hydrological Catchment Nowcasting)."""
-        rain_rate = np.nan_to_num(rain_rate, nan=0.0).astype(np.float32)
+        """Extrapolate precipitation (Hydrological Catchment Nowcasting)."""
+        rain_rate = np.nan_to_num(rain_rate, copy=True, nan=0.0).astype(np.float32, copy=False)
         
         float_preds = {}
         
@@ -243,7 +233,7 @@ class AdvectionEngine:
             roi_confidence = float(np.clip(np.mean(step_weights), 0.0, 1.0)) if step_weights else 0.0
             tracking_confidence = centroid_confidence * (0.35 + 0.35 * count_confidence + 0.30 * roi_confidence)
             
-            # Advectie uniforma prin shiftare scipy
+            # Uniform advection via scipy spatial shift
             shift_y = step * roi_vy
             shift_x = step * roi_vx
             
@@ -268,13 +258,21 @@ class AdvectionEngine:
                 + damped_shifted * damped_weight
             ) / max(total_weight, 1e-6)
             
-            # Mass conservation omitted to avoid artificially inflating severe cores.
+            # Bounded mass conservation (clamped to [0.80, 1.25] to avoid inflating severe cores)
             # Simulate organic thermodynamic step
             current_E, current_dE, R_step = update_energy(current_E, np.array([]), current_dE)
             thermo_multiplier *= R_step
             
             # Online bias corrects only displayed cumulative volumes, not advected physical field
             shifted = shifted * thermo_multiplier
+
+            # Bounded mass conservation: gently correct total precipitation mass
+            orig_mass = float(np.nansum(rain_rate))
+            shifted_mass = float(np.nansum(shifted))
+            if orig_mass > 0.01 and shifted_mass > 0.01:
+                mass_ratio = np.clip(orig_mass / shifted_mass, 0.80, 1.25)
+                shifted = shifted * mass_ratio
+
             if (
                 tracking_confidence < 0.35
                 and self._recent_actual_is_dry()
@@ -284,5 +282,4 @@ class AdvectionEngine:
             
             float_preds[step] = shifted
             
-            # Pentru compatibilitatea codului (nu le mai folosim în raport)
         return float_preds

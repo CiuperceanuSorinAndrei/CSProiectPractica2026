@@ -49,16 +49,17 @@ class FrameProcessor:
         # Dynamic Horizons based on actual frame delay
         import datetime, math
         if run_mode == "live" and frame_time is not None:
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             # Prevent negative delay if clock is slightly off
             delay_minutes = max(0.0, (now - frame_time).total_seconds() / 60.0)
             
             # Predict further ahead to compensate for delay. 
             # E.g., if delay is 25m, we are already 25m behind.
             # To predict 15m into the future (from NOW), we need 25+15 = 40m from the FRAME.
-            step_15m = int(math.ceil((delay_minutes + 15) / 15.0))
-            step_1h  = int(math.ceil((delay_minutes + 60) / 15.0))
-            step_2h  = int(math.ceil((delay_minutes + 120) / 15.0))
+            epsilon = 1e-6
+            step_15m = int(math.ceil(((delay_minutes + 15) / 15.0) - epsilon))
+            step_1h  = int(math.ceil(((delay_minutes + 60) / 15.0) - epsilon))
+            step_2h  = int(math.ceil(((delay_minutes + 120) / 15.0) - epsilon))
             
             # Ensure steps are monotonic and > 0
             step_15m = max(1, step_15m)

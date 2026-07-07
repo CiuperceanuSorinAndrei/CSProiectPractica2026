@@ -27,7 +27,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import EDL_USER, EDL_PASS
+from src.config import EDL_USER, EDL_PASS
 
 import numpy as np
 import shapefile
@@ -76,9 +76,12 @@ def cmr_granules(short_name: str, days: int) -> list[str]:
 def download(url: str, dest: str, netrc: str, cj: str) -> bool:
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
         return True
-    rc = subprocess.run(["curl", "-sL", "--netrc-file", netrc, "-b", cj, "-c", cj,
-                         "--max-time", "300", url, "-o", dest]).returncode
-    return rc == 0 and os.path.exists(dest) and os.path.getsize(dest) > 1000
+    res = subprocess.run(["curl", "-sL", "--netrc-file", netrc, "-b", cj, "-c", cj,
+                         "--max-time", "300", url, "-o", dest], capture_output=True, text=True)
+    if res.returncode != 0 or not os.path.exists(dest) or os.path.getsize(dest) < 1000:
+        print(f"curl failed. RC: {res.returncode}, STDERR: {res.stderr}")
+        return False
+    return True
 
 
 def _open_shp(zip_path: str, work: str):

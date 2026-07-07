@@ -2,18 +2,12 @@
 import os
 from datetime import datetime as dt
 
-import matplotlib
-matplotlib.use('Agg')
-
 import dash
-from dash import Input, Output, State
-from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 
 from src.io.cloud_data_service import CloudDataService
 from src.io.server_settings import ServerSettings
-from src.ui_helpers.plotting import StormMapPlotter
-from src.config import PREDEFINED_LOCATIONS, BASE_DIR
+from src.config import BASE_DIR
 
 from src.dashboard.constants import MANUAL_LOCATION, DEFAULT_TIME_RANGE
 from src.dashboard.frame_store import FrameStore
@@ -36,6 +30,7 @@ class NowcastingDashboard:
             external_stylesheets=[dbc.themes.DARKLY],
             assets_folder=os.path.join(BASE_DIR, "assets"),
             update_title=None,
+            suppress_callback_exceptions=True
         )
         self.app.title = "Precipitation Volume Estimation"
         

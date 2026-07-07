@@ -54,12 +54,18 @@ class ServerSettings:
     def from_inputs(cls, host, remote_dir, local_dir, file_format, time_delta, username, password) -> "ServerSettings":
         """Builds from UI fields, with fallback to config defaults for empty ones.
         time_delta is in minutes."""
+        try:
+            interval = int(time_delta)
+        except (TypeError, ValueError):
+            interval = 15
+        if interval <= 0:
+            interval = 15
         return cls(
             host=(host or "").strip() or FTP_HOST,
             remote_dir=(remote_dir or "").strip() or FTP_BASE_FOLDER,
             local_dir=(local_dir or "").strip() or DATA_RAW_DIR,
             file_format=(file_format or "").strip() or FTP_FILE_FORMAT,
-            time_delta=int(time_delta) if time_delta else 15,
+            time_delta=interval,
             username=(username or "").strip(),
             password=password or "",
         )

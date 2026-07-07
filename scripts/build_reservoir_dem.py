@@ -1,15 +1,16 @@
-"""Precomputa datele DEM per lac de acumulare intr-un JSON mic, comis in repo.
+"""Precomputes DEM data per reservoir into a small JSON file, committed to the repo.
 
-Pentru fiecare lac (>= prag de suprafata) descarca tile-uri Copernicus GLO-30, construieste
-curba stage-storage (integrand terenul peste luciul apei) si delimiteaza bazinul hidrografic.
-Lacurile mici sau fara acoperire DEM primesc o curba parametrica si bazin nedefinit (la rulare
-se cade pe suprafata lacului). Scriptul este reluabil: sare peste lacurile deja prezente in OUT.
+For each reservoir (>= area threshold) downloads Copernicus GLO-30 tiles, builds
+the stage-storage curve (integrating terrain above the waterline) and delineates the
+hydrographic catchment. Small reservoirs or those without DEM coverage get a parametric
+curve and undefined catchment (at runtime, falls back to direct rain on lake surface).
+The script is resumable: it skips reservoirs already present in the output.
 
-Rulare:
-    .venv\\Scripts\\python.exe scripts\\build_reservoir_dem.py [--limit N] [--only "Nume,Nume"]
+Usage:
+    .venv\\Scripts\\python.exe scripts\\build_reservoir_dem.py [--limit N] [--only "Name,Name"]
 
-Tile-urile brute (~2 GB) se cache-uiesc in --cache (implicit data/geo/dem_cache, gitignored);
-in repo se comite doar JSON-ul rezultat (~cateva sute KB).
+Raw tiles (~2 GB) are cached in --cache (default data/geo/dem_cache, gitignored);
+only the resulting JSON (~a few hundred KB) is committed to the repo.
 """
 from __future__ import annotations
 
@@ -54,6 +55,7 @@ def build_one(name: str, r: dict, src: DemSource) -> dict:
 
     # --- bazin hidrografic (doar pentru lacuri semnificative) ---
     catchment_km2 = None
+    catchment_wkt = None
     catchment_flag = "skipped_small"
     if res_area_km2 >= AREA_MIN_KM2:
         catchment_flag = "no_dem"
@@ -63,6 +65,7 @@ def build_one(name: str, r: dict, src: DemSource) -> dict:
                 break
             res = delineate_catchment(wc, poly, downsample=CATCH_DOWNSAMPLE)
             catchment_km2 = round(res["catchment_km2"], 3)
+            catchment_wkt = res.get("catchment_wkt")
             if not res["edge_clipped"]:
                 catchment_flag = "ok"
                 break
@@ -72,6 +75,7 @@ def build_one(name: str, r: dict, src: DemSource) -> dict:
         "stage_storage": curve.to_dict(),
         "catchment_km2": catchment_km2,
         "catchment_flag": catchment_flag,
+        "catchment_wkt": catchment_wkt,
         "source": curve.source,
         "res_area_km2": round(res_area_km2, 4),
         "vol_mil_m3": r["vol_mil_m3"],

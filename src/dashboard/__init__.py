@@ -1,4 +1,4 @@
-"""Pachetul dashboard: structura UI, starea si aplicatia Dash de nowcasting."""
+"""Dashboard package: UI structure, state management, and Dash nowcasting application."""
 from src.dashboard.frame_store import FrameStore
 from src.dashboard.frame_history import FrameHistory
 from src.dashboard.dashboard_layout import DashboardLayout

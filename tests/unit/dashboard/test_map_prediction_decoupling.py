@@ -1,4 +1,5 @@
 from src.dashboard.dashboard_callbacks import DashboardCallbacks
+from src.dashboard.frame_store import FrameStore
 from src.dashboard.session_manager import SessionManager
 
 
@@ -40,6 +41,14 @@ class FakeStore:
         return name
 
 
+def test_frame_store_exposes_datetime_separately_from_human_label():
+    store = FrameStore("data/raw", "h60_%Y%m%d_%H%M_fdk.nc.gz")
+    filename = "h60_20260707_1230_fdk.nc"
+
+    assert store.label(filename) == "2026-07-07 12:30"
+    assert store.datetime(filename).strftime("%Y%m%d_%H%M") == "20260707_1230"
+
+
 def test_prediction_area_is_auto_roi_not_map_zoom(monkeypatch):
     polygon = object()
 
@@ -59,10 +68,10 @@ def test_prediction_area_is_auto_roi_not_map_zoom(monkeypatch):
         FakeReservoirLoader,
     )
 
-    city_center, city_polygon, city_prediction_area = DashboardCallbacks._resolve_roi(
+    city_center, city_polygon, city_catchment, city_prediction_area = DashboardCallbacks._resolve_roi(
         "predefined", "Manual (Introducere coordonate)", None, 44.0, 26.0, 30.0
     )
-    reservoir_center, reservoir_polygon, reservoir_prediction_area = DashboardCallbacks._resolve_roi(
+    reservoir_center, reservoir_polygon, reservoir_catchment, reservoir_prediction_area = DashboardCallbacks._resolve_roi(
         "reservoir", None, "Lake", None, None, 30.0
     )
 

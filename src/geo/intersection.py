@@ -14,10 +14,10 @@ class PolygonIntersection:
         lat_grid: np.ndarray,
         polygon_geojson: dict,
     ) -> float:
-        """Fractia de pixeli din masca aflati in interiorul poligonului GeoJSON.
+        """Fraction of mask pixels inside the GeoJSON polygon.
 
-        Foloseste Shapely prepared geometry pentru a accelera testul contains
-        pentru query-uri multiple.
+        Uses Shapely prepared geometry to accelerate 'contains' tests
+        for multiple queries.
         """
         polygon = shape(polygon_geojson)
         if mask.shape != lon_grid.shape or mask.shape != lat_grid.shape:
@@ -27,7 +27,7 @@ class PolygonIntersection:
         if len(points) == 0:
             return 0.0
 
-        # V24 Fix: Vectorizare shapely 2.0 in loc de for loop nativ Python cu shapely.Point instantiat iterativ
+        # Vectorized shapely 2.0 implementation avoiding native Python for-loops
         lons = lon_grid[points[:, 0], points[:, 1]]
         lats = lat_grid[points[:, 0], points[:, 1]]
         
@@ -38,11 +38,11 @@ class PolygonIntersection:
 
     @staticmethod
     def create_polygon_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
-        """Creeaza o masca booleana (acelasi shape ca grid-ul) pentru interiorul unui poligon."""
+        """Creates a boolean mask (same shape as grid) for the interior of a polygon."""
         if polygon is None or lon_grid.shape != lat_grid.shape:
             return np.zeros_like(lon_grid, dtype=bool)
             
-        # Aplatizam grid-ul pentru shapely.points
+        # Flatten grid for shapely.points
         flat_lons = lon_grid.ravel()
         flat_lats = lat_grid.ravel()
         
@@ -53,7 +53,7 @@ class PolygonIntersection:
 
     @staticmethod
     def create_fractional_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
-        """Creeaza o masca fractionara [0.0, 1.0] bazata pe acoperirea exacta a poligonului pe fiecare pixel."""
+        """Creates a fractional mask [0.0, 1.0] based on exact polygon coverage per pixel."""
         mask_frac = np.zeros_like(lon_grid, dtype=np.float32)
         if polygon is None or lon_grid.shape != lat_grid.shape:
             return mask_frac
@@ -74,7 +74,29 @@ class PolygonIntersection:
         lat_diff_y = np.gradient(lat_grid, axis=0)
         lon_diff_x = np.gradient(lon_grid, axis=1)
         
-        for i, j in zip(y_idx, x_idx):
+        bbox_lons = lon_grid[y_idx, x_idx]
+        bbox_lats = lat_grid[y_idx, x_idx]
+        point_geoms = shapely.points(bbox_lons, bbox_lats)
+        
+        # Fast binary classification
+        inside_mask = shapely.contains(polygon, point_geoms)
+        
+        # Buffer distance to identify boundary pixels
+        max_dlon = np.max(np.abs(lon_diff_x[y_idx, x_idx])) if len(y_idx) > 0 else 0.0
+        max_dlat = np.max(np.abs(lat_diff_y[y_idx, x_idx])) if len(y_idx) > 0 else 0.0
+        pixel_radius = max(max_dlon, max_dlat)
+        
+        exterior = polygon.exterior
+        near_boundary_mask = shapely.dwithin(point_geoms, exterior, pixel_radius * 1.5)
+        
+        for idx, (i, j) in enumerate(zip(y_idx, x_idx)):
+            if inside_mask[idx] and not near_boundary_mask[idx]:
+                mask_frac[i, j] = 1.0
+                continue
+                
+            if not near_boundary_mask[idx]:
+                continue
+                
             c_lon = lon_grid[i, j]
             c_lat = lat_grid[i, j]
             

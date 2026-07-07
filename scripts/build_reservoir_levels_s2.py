@@ -25,7 +25,7 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import SH_ID, SH_SECRET
+from src.config import SH_ID, SH_SECRET
 
 from src.geo import sentinel2_level as s2
 from src.geo.reservoir_loader import ReservoirLoader

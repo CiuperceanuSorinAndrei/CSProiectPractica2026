@@ -3,6 +3,7 @@ import threading
 import shapefile
 from shapely.geometry import shape
 from shapely.ops import transform
+from shapely import wkt as shapely_wkt
 from pyproj import Transformer
 
 class ReservoirLoader:
@@ -53,12 +54,12 @@ class ReservoirLoader:
 
     @staticmethod
     def get_covered_reservoirs(shapefile_path="data/geo/reservoirs/LacuriAcumulare.shp") -> dict:
-        """Setul folosit de aplicatie: doar lacurile cu nivel curent din SWOT (scopul proiectului).
+        """The set used by the application: only reservoirs with current level from SWOT (project scope).
 
-        Cade pe setul complet daca RESERVOIRS_SWOT_COVERED_ONLY e False sau daca nu exista date SWOT
-        (ca aplicatia sa nu ramana fara lacuri inainte de a rula build_reservoir_levels.py).
+        Falls back to the complete set if RESERVOIRS_SWOT_COVERED_ONLY is False or if no SWOT data
+        exists (so the app doesn't run out of reservoirs before running build_reservoir_levels.py).
         """
-        from config import RESERVOIRS_SWOT_COVERED_ONLY
+        from src.config import RESERVOIRS_SWOT_COVERED_ONLY
         all_res = ReservoirLoader.get_all_reservoirs(shapefile_path)
         if not RESERVOIRS_SWOT_COVERED_ONLY:
             return all_res
@@ -79,12 +80,13 @@ class ReservoirLoader:
 
     @staticmethod
     def _augment_with_dem(reservoirs: dict) -> None:
-        """Ataseaza fiecarui lac curba stage-storage, suprafata bazinului si nivelul curent.
+        """Attaches stage-storage curve, catchment area, and current level to each reservoir.
 
-        Curba + bazinul vin din dem_augment.json (precalculat din DEM) unde exista, altfel o curba
-        parametrica din atribute. Curba se extinde apoi sub NNR (partea submersa) ca sa poata porni
-        de la un nivel curent. Nivelul curent vine din reservoir_levels.json (SWOT); fara el, se
-        porneste implicit de la NNR. Astfel aplicatia merge si cu date partiale.
+        Curve + catchment come from dem_augment.json (precomputed from DEM) where available,
+        otherwise a parametric curve from attributes. The curve is then extended below NNR
+        (submerged part) so simulation can start from a current level. Current level comes from
+        reservoir_levels.json (SWOT); without it, simulation starts implicitly from NNR.
+        The application works with partial data.
         """
         from src.geo.stage_storage import StageStorageCurve
 
@@ -99,12 +101,16 @@ class ReservoirLoader:
             if entry:
                 curve = StageStorageCurve.from_dict(entry["stage_storage"])
                 r["catchment_km2"] = entry.get("catchment_km2")
+                # Parse catchment boundary polygon from WKT (used for MAP calculation)
+                cwkt = entry.get("catchment_wkt")
+                r["catchment_polygon"] = shapely_wkt.loads(cwkt) if cwkt else None
                 r["catchment_flag"] = entry.get("catchment_flag")
             else:
                 wl = r.get("waterline_attr_m") or 0.0
                 curve = StageStorageCurve.from_attributes(
                     r["max_volume_m3"], r["surface_area_m2"], wl if wl > 0 else 0.0)
                 r["catchment_km2"] = None
+                r["catchment_polygon"] = None
                 r["catchment_flag"] = "not_built"
 
             curve = curve.with_submerged_branch(r["surface_area_m2"])
@@ -113,8 +119,8 @@ class ReservoirLoader:
 
     @staticmethod
     def _attach_current_level(r: dict, curve, lvl: dict | None) -> None:
-        """Stabileste volumul de pornire din nivelul SWOT (cota luciului -> volum pe curba),
-        sau None (estimatorul porneste de la NNR) daca lacul nu are observatie SWOT."""
+        """Sets the starting volume from the SWOT level (water surface -> volume on curve),
+        or None (estimator starts from NNR) if the reservoir has no SWOT observation."""
         v_nnr = r.get("max_volume_m3") or 0.0
         if lvl and lvl.get("wse_m") is not None and v_nnr > 0:
             wse = float(lvl["wse_m"])
@@ -137,10 +143,10 @@ class ReservoirLoader:
 
     @staticmethod
     def _build_reservoir_entry(rec, shp, transformer, existing: dict):
-        """Construieste o intrare (nume, date) dintr-un record+shape; None daca lipseste numele sau e gol.
+        """Builds an entry (name, data) from a record+shape; None if name is missing or empty.
 
-        Reproiecteaza geometria din Stereo 70 (EPSG:31700) in WGS84 si dezambiguizeaza numele
-        duplicate consultand `existing` (lacurile deja adaugate).
+        Reprojects geometry from Stereo 70 (EPSG:31700) to WGS84 and disambiguates
+        duplicate names by consulting `existing` (already-added reservoirs).
         """
         denumire = rec.denumire
         if not denumire or str(denumire).strip() == "":

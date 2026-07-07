@@ -40,7 +40,6 @@ class DashboardLayout:
                 *self._server_config_section(),
                 *self._run_mode_section(),
                 *self._roi_section(),
-                *self._hydrology_section(),
                 *self._ingestion_section(),
                 html.Hr(),
                 *self._time_section(),
@@ -178,28 +177,6 @@ class DashboardLayout:
                 ]
             ),
             html.Div(id="input-warnings"),
-        ]
-
-    @staticmethod
-    def _hydrology_section() -> list:
-        from src.config import EVAP_MM_PER_DAY, RESERVOIR_OUTFLOW_M3S
-        return [
-            html.H6("Hydrological Balance (Outflows)", className="fw-bold"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Label("Evaporation (mm/day)", className="small text-light"),
-                    dbc.Input(id="evap-input", type="number", min=0, step=0.5, debounce=True,
-                              value=EVAP_MM_PER_DAY, size="sm",
-                              className="bg-dark text-light border-secondary"),
-                ]),
-                dbc.Col([
-                    dbc.Label("Outflow (m³/s)", className="small text-light"),
-                    dbc.Input(id="outflow-input", type="number", min=0, step=1, debounce=True,
-                              value=RESERVOIR_OUTFLOW_M3S, size="sm",
-                              className="bg-dark text-light border-secondary"),
-                ]),
-            ], className="mb-1"),
-            html.Small("0 = ignored (short nowcast windows).", className="text-muted d-block mb-3"),
         ]
 
     @staticmethod

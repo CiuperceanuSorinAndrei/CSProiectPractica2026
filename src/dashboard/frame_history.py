@@ -118,3 +118,20 @@ class FrameHistory:
                 
                 metrics[t][horizon] = {"pod": pod * 100.0, "far": far * 100.0, "cmae": cmae}
         return metrics
+
+    def get_latest_verification(self) -> dict[str, dict[str, float]]:
+        """Returns the actual vs predicted accumulation for the most recently completed horizons."""
+        verification = {}
+        for horizon, steps in HORIZON_STEPS.items():
+            if len(self.true_volumes) >= steps:
+                actual_acc_val = sum(self.true_volumes[-steps:])
+                pred_acc_val = self.pred_volumes_acc[horizon][-steps] if len(self.pred_volumes_acc[horizon]) >= steps else 0.0
+                error_pct = ((pred_acc_val - actual_acc_val) / actual_acc_val * 100.0) if actual_acc_val > 0.1 else 0.0
+                verification[horizon] = {
+                    "actual_mm": actual_acc_val,
+                    "predicted_mm": pred_acc_val,
+                    "error_pct": error_pct
+                }
+            else:
+                verification[horizon] = None
+        return verification

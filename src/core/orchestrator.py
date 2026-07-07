@@ -38,6 +38,7 @@ class Orchestrator:
         lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float, 
         polygon: Optional[Any] = None,
+        catchment_polygon: Optional[Any] = None,
         frame_time: Optional[str] = None, 
         run_mode: str = "historic"
     ) -> FrameResult | None:
@@ -48,7 +49,7 @@ class Orchestrator:
 
         try:
             prep = self._cache_manager.get_frame_prep(
-                file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon
+                file_path, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon, catchment_polygon
             )
             if prep is None or self._cache_manager.geometry is None:
                 return None
@@ -67,10 +68,11 @@ class Orchestrator:
         lon_min: float, lon_max: float,
         lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float, 
-        polygon: Optional[Any] = None
+        polygon: Optional[Any] = None,
+        catchment_polygon: Optional[Any] = None
     ) -> None:
         self._cache_manager.start_warmup(
-            file_paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon
+            file_paths, lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, polygon, catchment_polygon
         )
 
     def stop_warmup(self) -> None:

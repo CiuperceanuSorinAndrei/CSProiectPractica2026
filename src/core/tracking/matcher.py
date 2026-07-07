@@ -1,4 +1,4 @@
-"""Modul pentru corelarea celulelor intre cadre folosind KD-Tree si Hungarian Algorithm."""
+"""Module for matching cells between frames using KD-Tree and Hungarian Algorithm."""
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -11,7 +11,7 @@ from src.core.tracking.storm_filter import StormFilter
 
 
 class Matcher:
-    """Asociaza celulele curente cu celulele precedente optimizat prin KD-Tree."""
+    """Associates current cells with previous cells, optimized via KD-Tree."""
 
     @staticmethod
     def _coords_iou(coords_a: np.ndarray | list | None, coords_b: np.ndarray | list | None) -> float:
@@ -50,7 +50,7 @@ class Matcher:
         kalman_bank: dict[str, StormFilter],
         max_dist_pixels: int = 15
     ) -> dict[int, int]:
-        """Returneaza un dictionar care mapeaza indexul curent la indexul precedent."""
+        """Returns a dictionary mapping current index to previous index."""
         if not current_cells or not previous_cells:
             return {}
 
@@ -68,8 +68,8 @@ class Matcher:
         kalman_bank: dict[str, StormFilter],
         max_dist_pixels: int,
     ) -> list[tuple[int, int, float]]:
-        """Muchii candidate (i_curent, j_precedent, cost_hibrid) via KD-Tree pre-filtering."""
-        # Extragem pozitiile prezise de Kalman pentru celulele precedente
+        """Candidate edges (i_current, j_previous, hybrid_cost) via KD-Tree pre-filtering."""
+        # Extract predicted positions from Kalman for previous cells
         prev_coords = []
         valid_prev_indices = []
         for j, p_cell in enumerate(previous_cells):
@@ -84,11 +84,11 @@ class Matcher:
 
         prev_coords_arr = np.array(prev_coords)
 
-        # KD-Tree pre-filtering: cautam vecinii pe o raza dubla pentru a include split-uri si erori
+        # KD-Tree pre-filtering: search neighbors on a double radius to include splits and errors
         tree = cKDTree(prev_coords_arr)
 
-        # Cautam vecinii cu o raza fizica maxima absolut sigura (30 pixeli = ~360 km/h)
-        # Orice miscare mai mare este garantat zgomot sau eroare radar
+        # Search neighbors with an absolutely safe maximum physical radius (30 pixels = ~360 km/h)
+        # Any larger movement is guaranteed to be noise or radar error
         radius_limit = 30.0
         
         edges = []
@@ -110,7 +110,7 @@ class Matcher:
                 if p_id in kalman_bank:
                     sigma_pos = np.sqrt(max(kalman_bank[p_id].positional_uncertainty, 1.0))
                 
-                # Limita Mahalanobis 3-Sigma cu capat fizic dictat de diametrul furtunii
+                # Mahalanobis 3-Sigma limit with a physical cap dictated by storm diameter
                 p_area = float(p_cell.area_pixels if p_cell.area_pixels > 0 else 1.0)
                 physical_radius = np.sqrt(p_area) * 1.5
                 min_limit = max(15.0, physical_radius)
@@ -145,7 +145,7 @@ class Matcher:
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
                 
                 # Phase 3: Trajectory Filtering (Mahalanobis Constraint)
-                # Daca eroarea (dist) este foarte aproape de marginea tolerantei 3-Sigma, costul explodeaza.
+                # If the error (dist) is very close to the edge of the 3-Sigma tolerance, the cost explodes.
                 if dist > actual_limit * 0.8:
                     hybrid_cost += 500.0
                 elif hybrid_cost >= 2.5:
@@ -160,7 +160,7 @@ class Matcher:
     def _connected_components(
         edges: list[tuple[int, int, float]],
     ) -> list[tuple[list[int], list[int]]]:
-        """Grupeaza muchiile in componente conexe bipartite (BFS) pentru asignare locala."""
+        """Groups edges into bipartite connected components (BFS) for local assignment."""
         adj = defaultdict(list)
         for u, v, w in edges:
             adj[f"C_{u}"].append(f"P_{v}")
@@ -194,7 +194,7 @@ class Matcher:
         components: list[tuple[list[int], list[int]]],
         edges: list[tuple[int, int, float]],
     ) -> dict[int, int]:
-        """Hungarian (linear_sum_assignment) pe fiecare componenta -> {idx_curent: idx_precedent}."""
+        """Hungarian (linear_sum_assignment) on each component -> {idx_current: idx_previous}."""
         matches = {}
         edge_costs = {(u, v): w for u, v, w in edges}
 

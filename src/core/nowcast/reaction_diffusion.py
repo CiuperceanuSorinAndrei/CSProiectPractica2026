@@ -3,8 +3,8 @@ import numpy as np
 def spatial_diffusion(E: float, neighbors_E: np.ndarray, gamma: float = 0.15) -> float:
     """Bounded diffusion (mass conserving discrete Laplacian)"""
     neighbor_mean = neighbors_E.mean() if len(neighbors_E) > 0 else E
-    # Conservare stricta a masei: difuzia este o combinatie liniara completa,
-    # fara eliminari asimetrice.
+    # Strict mass conservation: diffusion is a complete linear combination
+    # without asymmetric eliminations.
     return (1 - gamma) * E + gamma * neighbor_mean
 
 def sigmoid(x: float) -> float:
@@ -12,11 +12,13 @@ def sigmoid(x: float) -> float:
     return float(1 / (1 + np.exp(-x)))
 
 def reaction(E: float, dE: float, alpha_g: float = 1.2, alpha_d: float = 1.2, beta: float = 1.0) -> float:
-    # Scale Invariance: dE must be fractional relative to E
-    dE_frac = dE / (abs(E) + 1e-6)
+    # Scale Invariance: dE must be fractional relative to E.
+    # Energy cannot be negative; clamp it.
+    E_safe = max(float(E), 0.0)
+    dE_frac = dE / (E_safe + 1e-6)
     
-    # Inertie stabila, nu prabusim cand E < 1.0
-    base_inertia = 0.9 + 0.1 * (abs(E) / (abs(E) + 1.0))
+    # Stable inertia, prevent collapse when E < 1.0
+    base_inertia = 0.9 + 0.1 * (E_safe / (E_safe + 1.0))
     
     if dE_frac >= 0:
         R = base_inertia + alpha_g * dE_frac
@@ -35,22 +37,23 @@ def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
     
     diff_term = E_diff - E
     
-    # Momentum cu retentie crescuta (amnezie redusa). Furtunile isi amintesc 
-    # trendul de crestere/disipare pentru un orizont mai lung (0.95 in loc de 0.7).
+    # High momentum retention (reduced amnesia). Storms remember
+    # their growth/dissipation trend for a longer horizon (0.95 instead of 0.7).
     dE_input = 0.95 * dE_old + 0.05 * diff_term
     
     R = reaction(E_diff, dE_input, alpha_g, alpha_d, beta)
     
-    E_new = E_diff * R
+    E_new = max(E_diff * R, 0.0)
     
-    # IMPORTANT: Returnam dE_input ca noul momentum (care decade natural cu 0.7), 
-    # nu E_new - E, altfel cream un infinite positive feedback loop cand R > 1.0!
-    # Returnam de asemenea si R (factorul pur de reactie) pentru a-l folosi la masca volumetrica.
+    # IMPORTANT: We return dE_input as the new momentum (which decays naturally),
+    # not E_new - E, otherwise we create an infinite positive feedback loop when R > 1.0.
+    # We also return R (the pure reaction factor) to use for the volumetric mask.
     return E_new, dE_input, R
 
 def lifecycle(E: float, dE: float, collapse_threshold: float = 0.2) -> str:
     # Scale Invariance: relative collapse rate
-    collapse = max(0.0, -dE) / (abs(E) + 1e-6)
+    E_safe = max(float(E), 0.0)
+    collapse = max(0.0, -dE) / (E_safe + 1e-6)
 
     # If the cell is collapsing faster than 20% of its energy per step, it's dying.
     # Also, if its energy is extremely small and dropping, kill it immediately to prevent lingering.

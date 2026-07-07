@@ -51,7 +51,11 @@ class FrameStore:
         except (ValueError, TypeError):
             return None
 
+    def datetime(self, filename: str):
+        """Frame timestamp parsed from the configured filename pattern."""
+        return self._file_datetime(filename)
+
     def label(self, filename: str) -> str:
         """Human label 'YYYY-MM-DD HH:MM' derived from the filename."""
-        d = self._file_datetime(filename)
+        d = self.datetime(filename)
         return d.strftime("%Y-%m-%d %H:%M") if d is not None else filename

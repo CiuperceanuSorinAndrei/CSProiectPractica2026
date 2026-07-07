@@ -45,8 +45,8 @@ class ReservoirFillEstimator:
 
     @staticmethod
     def estimate(map_mm: float, reservoir: dict | None, runoff_coeff: float,
-                 duration_hours: float | None = None, evap_mm_day: float = 0.0,
-                 outflow_m3s: float = 0.0) -> ReservoirFillResult | None:
+                 duration_hours: float | None = None, frame_time=None,
+                 evap_mm_day: float | None = None, outflow_m3s: float | None = None) -> ReservoirFillResult | None:
         """Bilant hidrologic al lacului: V_{t+1} = V_t + intrare - evacuare - evaporare, apoi citit
         pe curba stage-storage. None cand nu e selectat un lac / lipseste capacitatea (mod oras/cerc).
 
@@ -78,7 +78,20 @@ class ReservoirFillEstimator:
         # iesiri: evacuare la baraj + evaporare de suprafata, pe durata evenimentului
         outflow_m3 = evap_m3 = 0.0
         if duration_hours and duration_hours > 0.0:
+            # Dynamic base outflow: 5 L/s/km2 if catchment known, else 10 m3/s default.
+            if outflow_m3s is None:
+                outflow_m3s = (catch_km2 * 0.005) if catch_km2 else 10.0
             outflow_m3 = max(outflow_m3s, 0.0) * duration_hours * 3600.0
+            
+            if evap_mm_day is None:
+                # Dynamic evaporation based on month for Romania (mm/day)
+                evap_monthly_mm_day = {
+                    1: 0.5, 2: 0.8, 3: 1.5, 4: 2.5, 5: 3.5, 6: 4.5,
+                    7: 5.0, 8: 4.8, 9: 3.0, 10: 1.8, 11: 0.8, 12: 0.5
+                }
+                month = frame_time.month if frame_time else 6
+                evap_mm_day = evap_monthly_mm_day.get(month, 2.5)
+            
             area = reservoir.get("surface_area_m2") or 0.0
             evap_m3 = max(evap_mm_day, 0.0) * MM_TO_M * area * (duration_hours / 24.0)
 

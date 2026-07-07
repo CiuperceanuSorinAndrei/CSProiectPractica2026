@@ -18,7 +18,7 @@ import subprocess
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _ROOT)
 
-import config
+from src import config
 
 # (eticheta, fisier rezultat, script de build, credentiale necesare -> (nume, valoare))
 _STEPS = [
