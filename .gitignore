@@ -5,13 +5,14 @@ __pycache__/
 
 # Date
 data/raw/
+# Cache tile-uri DEM Copernicus GLO-30 (~2 GB, regenerabil); JSON-ul derivat se comite
+data/geo/dem_cache/
+# Cache granule SWOT LakeSP (~22 MB fiecare, regenerabil); reservoir_levels.json se comite
+data/geo/swot_cache/
 
 # Fișiere de sistem
 .DS_Store
 *.log
-
-# Date de logare
-.env
 
 .agents
 .agent

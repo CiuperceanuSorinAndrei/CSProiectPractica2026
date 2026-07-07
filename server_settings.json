@@ -1,0 +1,7 @@
+{
+  "host": "ftphsaf.meteoam.it",
+  "remote_dir": "h60/h60_cur_mon_data",
+  "local_dir": "C:\\Users\\Practica\\PycharmProjects\\CSProiectPractica2026\\data\\raw",
+  "file_format": "h60_%Y%m%d_%H%M_fdk.nc.gz",
+  "time_delta": 15
+}

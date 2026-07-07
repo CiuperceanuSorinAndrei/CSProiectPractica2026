@@ -1,8 +1,7 @@
 """Setari de server/fisiere editabile din UI, persistate pe disc (FARA credentiale).
 
 Campurile host / director remote / director local / format fisier se salveaza in
-server_settings.json. Utilizatorul si parola NU se persista niciodata - vin din .env la
-pornire si pot fi suprascrise in UI doar pentru sesiunea curenta.
+server_settings.json. Utilizatorul si parola NU se persista niciodata.
 """
 from __future__ import annotations
 

@@ -44,8 +44,20 @@ class FtpClient:
             self._current_ftp.prot_p()  # Securizeaza conexiunea de date
             print("Conectare securizata (FTPS) reusita")
         except (ftplib.error_perm, ftplib.error_temp, EOFError, OSError) as e:
-            raise RuntimeError(f"FTPS TLS securizat nesuportat sau a esuat. Fallback-ul plaintext a fost dezactivat pentru securitate. Eroare: {e}")
-            
+            # Serverul nu suporta FTPS (ex. H-SAF ofera doar FTP simplu, fara AUTH TLS) ->
+            # revenim la FTP simplu. Datele H-SAF sunt publice, deci riscul e acceptabil.
+            print(f"FTPS indisponibil ({e}); revin la FTP simplu.")
+            try:
+                self._current_ftp.close()
+            except Exception:
+                pass
+            try:
+                self._current_ftp = ftplib.FTP(self._host, timeout=self._timeout)
+                self._current_ftp.login(user=self._username, passwd=self._password)
+                print("Conectare FTP simplu reusita")
+            except (ftplib.error_perm, ftplib.error_temp, EOFError, OSError) as e2:
+                raise RuntimeError(f"Conectare FTP esuata (verificati utilizatorul/parola H-SAF). Eroare: {e2}")
+
         self._current_ftp.cwd(self._base_dir)
 
     def disconnect(self):

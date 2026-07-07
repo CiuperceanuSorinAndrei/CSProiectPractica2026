@@ -3,7 +3,7 @@ import uuid
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-from config import PREDEFINED_LOCATIONS
+from config import PREDEFINED_LOCATIONS, EVAP_MM_PER_DAY, RESERVOIR_OUTFLOW_M3S
 from src.dashboard.constants import DEFAULT_TIME_RANGE, MAP_ZOOM_DEFAULT, ROI_RADIUS_DEFAULT
 from src.dashboard.frame_store import FrameStore
 
@@ -40,6 +40,7 @@ class DashboardLayout:
                 *self._server_config_section(),
                 *self._run_mode_section(),
                 *self._roi_section(),
+                *self._water_balance_section(),
                 *self._ingestion_section(),
                 html.Hr(),
                 *self._time_section(),
@@ -104,7 +105,7 @@ class DashboardLayout:
     @staticmethod
     def _roi_section() -> list:
         from src.geo.reservoir_loader import ReservoirLoader
-        reservoirs = ReservoirLoader.get_all_reservoirs()
+        reservoirs = ReservoirLoader.get_covered_reservoirs()
         res_options = [{"label": k, "value": k} for k in sorted(reservoirs.keys())]
 
         return [
@@ -176,6 +177,29 @@ class DashboardLayout:
                 ]
             ),
             html.Div(id="input-warnings"),
+        ]
+
+    @staticmethod
+    def _water_balance_section() -> list:
+        """Parametri de iesire pentru bilantul hidrologic al lacului: evaporare + evacuare la baraj.
+        0 = ignorat (ferestre scurte de nowcast)."""
+        return [
+            html.H6("Bilanț Hidrologic (Ieșiri)", className="fw-bold"),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label("Evaporare (mm/zi)", className="small text-light"),
+                    dbc.Input(id="evap-input", type="number", min=0, step=0.5, debounce=True,
+                              value=EVAP_MM_PER_DAY, size="sm",
+                              className="bg-dark text-light border-secondary"),
+                ]),
+                dbc.Col([
+                    dbc.Label("Debit evacuare (m³/s)", className="small text-light"),
+                    dbc.Input(id="outflow-input", type="number", min=0, step=1, debounce=True,
+                              value=RESERVOIR_OUTFLOW_M3S, size="sm",
+                              className="bg-dark text-light border-secondary"),
+                ]),
+            ], className="mb-1"),
+            html.Small("0 = ignorat (ferestre scurte).", className="text-muted d-block mb-3"),
         ]
 
     @staticmethod
