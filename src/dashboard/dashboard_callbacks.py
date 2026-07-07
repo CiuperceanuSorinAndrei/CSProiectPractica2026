@@ -266,8 +266,10 @@ class DashboardCallbacks:
             h_s, h_e = int(start_h), int(end_h)
             if not (0 <= h_s <= 23) or not (0 <= h_e <= 23):
                 return "Orele trebuie să fie între 0 și 23!", dash.no_update, dash.no_update, dash.no_update
-            start_dt = dt.fromisoformat(start_d).replace(hour=h_s)
-            end_dt = dt.fromisoformat(end_d).replace(hour=h_e)
+            start_dt = dt.fromisoformat(start_d).replace(hour=h_s, minute=0, second=0)
+            # Ora Stop e inclusiva pentru toata ora: pana la HH:45 (nu doar HH:00), altfel
+            # ultimele 3 cadre din ora selectata (HH:15/HH:30/HH:45) ar fi taiate.
+            end_dt = dt.fromisoformat(end_d).replace(hour=h_e, minute=59, second=59)
         except Exception:
             return "Format dată/oră invalid!", dash.no_update, dash.no_update, dash.no_update
 
