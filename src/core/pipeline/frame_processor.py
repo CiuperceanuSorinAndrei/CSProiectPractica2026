@@ -54,7 +54,7 @@ class FrameProcessor:
             delay_minutes = max(0.0, (now - frame_time).total_seconds() / 60.0)
             
             # Shift prediction steps to compensate for frame latency.
-            epsilon = 1e-6
+            epsilon = 1e-3
             step_15m = int(math.ceil(((delay_minutes + 15) / 15.0) - epsilon))
             step_1h  = int(math.ceil(((delay_minutes + 60) / 15.0) - epsilon))
             step_2h  = int(math.ceil(((delay_minutes + 120) / 15.0) - epsilon))

@@ -1,8 +1,9 @@
 import argparse
 import sys
+import json
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.core.constants import HORIZON_NAMES
 from src.dashboard.constants import DATA_DIR
@@ -10,28 +11,61 @@ from src.dashboard.frame_store import FrameStore
 from src.dashboard.session_manager import SessionManager
 from src.geo.reservoir_loader import ReservoirLoader
 
-# Configuration
 TARGET_RESERVOIRS = ("Vidraru", "Portile De Fier I", "Izvorul Muntelui", "Gura Apelor", "Tarnita", "Somesu Cald")
+TARGET_PERIODS = {
+    "Period 1": ("2026-06-01T00:00:00", "2026-06-12T16:00:00", False),
+    "Period 2": ("2026-06-12T16:00:00", "2026-06-24T08:00:00", False),
+    "Period 3": ("2026-06-24T08:00:00", "2026-07-06T00:00:00", True),
+    "Full Period": ("2026-06-01T00:00:00", "2026-07-06T00:00:00", True),
+}
 
 def build_target_locations() -> list[dict]:
-    # 1. Base locations
-    locs = [{"name": "Craiova", "bbox": (23.750, 23.850, 44.250, 44.350), "center": (44.310, 23.800), "radius_km": 30.0, "polygon": None}]
-    reservoirs = ReservoirLoader.get_all_reservoirs()
+    locs = []
+    pad = 0.05
     
-    missing = [n for n in TARGET_RESERVOIRS if n not in reservoirs]
-    if missing: raise RuntimeError(f"Missing reservoirs: {', '.join(missing)}")
-        
+    reservoirs = ReservoirLoader.get_all_reservoirs()
+    missing = [name for name in TARGET_RESERVOIRS if name not in reservoirs]
+    if missing:
+        raise RuntimeError(f"Missing reservoirs: {', '.join(missing)}")
+    
     for name in TARGET_RESERVOIRS:
         res = reservoirs[name]
         min_lon, min_lat, max_lon, max_lat = res["bounds"]
-        locs.append({"name": name, "bbox": (min_lon, max_lon, min_lat, max_lat), "center": res["center"], "radius_km": res["radius_km"], "polygon": res["polygon"]})
+        locs.append({
+            "name": name,
+            "bbox": (min_lon - pad, max_lon + pad, min_lat - pad, max_lat + pad),
+            "center": res["center"],
+            "polygon": res.get("polygon"),
+            "radius_km": res.get("radius_km", 15.0)
+        })
+
+    locs.insert(0, {
+        "name": "Craiova",
+        "bbox": (23.750 - pad, 23.850 + pad, 44.250 - pad, 44.350 + pad),
+        "center": (44.310, 23.800),
+        "radius_km": 30.0,
+        "polygon": None,
+    })
+
     return locs
 
-def run_simulation(loc: str, bbox: tuple, center: tuple, start: str, end: str, poly=None, r_km: float=30.0, quiet: bool=False):
+def run_simulation(
+    loc: str,
+    bbox: tuple,
+    center: tuple,
+    start: str,
+    end: str,
+    poly=None,
+    r_km: float=30.0,
+    quiet: bool=False,
+    include_end: bool=True,
+):
     # 2. Setup session
-    store = FrameStore(DATA_DIR, "h60_%Y%m%d_%H%M_fdk.nc.gz")
+    store = FrameStore(DATA_DIR, "h60_%Y%m%d_%H%M_fdk.nc")
     tr = {"start": start, "end": end}
     files = store.filtered(tr, run_mode="historic")
+    if not include_end:
+        files = [filename for filename in files if store.datetime(filename).isoformat() < end]
 
     if not files:
         if not quiet: print("No files found!")
@@ -42,7 +76,7 @@ def run_simulation(loc: str, bbox: tuple, center: tuple, start: str, end: str, p
 
     # 3. Process frames
     for i in range(len(files)):
-        sm.process_to_frame(sid, i, files, bbox, center, r_km, poly, "historic", tr, store)
+        sm.process_to_frame(sid, i, files, bbox, center, r_km, "historic", tr, store, polygon=poly)
 
     orch, hist = sm.get_state(sid)
     actual, predicted = {}, {}
@@ -59,6 +93,50 @@ def run_simulation(loc: str, bbox: tuple, center: tuple, start: str, end: str, p
             
     orch.stop_warmup()
     return {"actual": actual, "predicted": predicted}
+
+def bias_pct(actual: float, predicted: float) -> float:
+    if actual > 0.0:
+        return (predicted - actual) / actual * 100.0
+    return 0.0 if abs(predicted) < 1e-9 else float("inf")
+
+def row_passes(actual: float, predicted: float) -> bool:
+    return abs(predicted) < 1e-9 if actual <= 0.0 else -15.0 <= bias_pct(actual, predicted) <= 15.0
+
+def run_target_validation(locations: list[dict], verbose: bool=True) -> list[dict]:
+    rows = []
+    for period_name, (start, end, include_end) in TARGET_PERIODS.items():
+        if verbose:
+            print(f"\n=== {period_name.upper()} ===", flush=True)
+        for loc in locations:
+            res = run_simulation(
+                loc["name"], loc["bbox"], loc["center"], start, end,
+                loc.get("polygon"), loc.get("radius_km", 30.0),
+                quiet=True, include_end=include_end,
+            )
+            if not res:
+                continue
+            for horizon in HORIZON_NAMES:
+                actual = res["actual"][horizon]
+                predicted = res["predicted"][horizon]
+                bias = bias_pct(actual, predicted)
+                passed = row_passes(actual, predicted)
+                rows.append({
+                    "period": period_name,
+                    "location": loc["name"],
+                    "horizon": horizon,
+                    "actual_mm": actual,
+                    "predicted_mm": predicted,
+                    "bias_pct": bias,
+                    "pass": passed,
+                })
+                if verbose:
+                    bias_text = "inf" if bias == float("inf") else f"{bias:+.1f}%"
+                    print(
+                        f"{loc['name']:18} | {horizon:3} | Real: {actual:10.2f} | "
+                        f"Pred: {predicted:10.2f} | {bias_text:>7} | {'PASS' if passed else 'FAIL'}",
+                        flush=True,
+                    )
+    return rows
 
 def run_rolling_validation(locations: list[dict], start_day: int=1, end_day: int=26):
     # 4. Rolling validation
@@ -91,6 +169,9 @@ def main():
     # 5. Initialization
     parser = argparse.ArgumentParser()
     parser.add_argument("--rolling-validation", action="store_true")
+    parser.add_argument("--target-validation", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--assert-targets", action="store_true")
     args = parser.parse_args()
 
     locs = build_target_locations()
@@ -98,13 +179,22 @@ def main():
     if args.rolling_validation:
         run_rolling_validation(locs)
         sys.exit(0)
+    if args.target_validation:
+        rows = run_target_validation(locs, verbose=not args.json)
+        if args.json:
+            print(json.dumps(rows, indent=2, allow_nan=True))
+        if args.assert_targets and not all(row["pass"] for row in rows):
+            sys.exit(1)
+        sys.exit(0)
 
-    timeframes = {"Short": ("2026-06-13T22:00:00", "2026-06-14T23:00:00"), "Medium": ("2026-06-10T01:00:00", "2026-06-14T23:00:00")}
-
-    for tf_name, (start, end) in timeframes.items():
+    for tf_name, (start, end, include_end) in TARGET_PERIODS.items():
         print(f"\n=== {tf_name.upper()} ===")
         for l in locs:
-            run_simulation(l["name"], l["bbox"], l["center"], start, end, l.get("polygon"), l.get("radius_km", 30.0))
+            run_simulation(
+                l["name"], l["bbox"], l["center"], start, end,
+                l.get("polygon"), l.get("radius_km", 30.0),
+                include_end=include_end,
+            )
 
 if __name__ == "__main__":
     main()

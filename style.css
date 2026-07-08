@@ -1,0 +1,139 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #333333;
+    line-height: 1.6;
+    margin: 2cm;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #01579b;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+}
+
+h1 {
+    font-size: 2.2em;
+    border-bottom: 2px solid #01579b;
+    padding-bottom: 0.3em;
+}
+
+h2 {
+    font-size: 1.6em;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 0.2em;
+}
+
+a {
+    color: #0277bd;
+    text-decoration: none;
+}
+
+code {
+    font-family: 'Consolas', 'Courier New', Courier, monospace;
+    font-size: 0.9em;
+    color: #333;
+}
+
+pre {
+    padding: 1em;
+    overflow-x: auto;
+    border: none;
+    border-left: 3px solid #01579b;
+    background-color: transparent;
+}
+
+pre code {
+    padding: 0;
+    color: #333;
+    font-size: 0.85em;
+    background-color: transparent;
+}
+
+blockquote {
+    border-left: 3px solid #01579b;
+    padding-left: 1em;
+    margin-left: 0;
+    color: #555;
+    background-color: transparent;
+    padding: 0.5em 1em;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5em 0;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: left;
+}
+
+th {
+    background-color: #01579b;
+    color: white;
+}
+
+img {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 1.5em auto;
+    border-radius: 6px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+hr {
+    border: 0;
+    height: 1px;
+    background: #e0e0e0;
+    margin: 2em 0;
+}
+
+.cover-page {
+    text-align: center;
+    margin-top: 10em;
+    margin-bottom: 15em;
+}
+
+.cover-title {
+    font-size: 3em;
+    color: #01579b;
+    font-weight: bold;
+    border: none;
+}
+
+.cover-subtitle {
+    font-size: 1.5em;
+    color: #555;
+    margin-top: 1em;
+}
+
+@media print {
+    h1, h2, h3, h4, h5, h6 {
+        page-break-after: avoid;
+        break-after: avoid;
+    }
+    
+    table, img, pre, blockquote {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+    
+    p, li, td {
+        orphans: 3;
+        widows: 3;
+    }
+    
+    .cover-page {
+        page-break-after: always;
+        break-after: page;
+    }
+}

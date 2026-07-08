@@ -8,7 +8,7 @@ def spatial_diffusion(E: float, neighbors_E: np.ndarray, gamma: float = 0.15) ->
 
 
 
-def reaction(E: float, dE: float, alpha_g: float = 1.2, alpha_d: float = 1.2, beta: float = 1.0) -> float:
+def reaction(E: float, dE: float, alpha_g: float = 0.2, alpha_d: float = 0.2, beta: float = 1.0) -> float:
     # Fractional relative energy change.
     E_safe = max(float(E), 0.0)
     dE_frac = dE / (E_safe + 1e-6)
@@ -26,8 +26,8 @@ def reaction(E: float, dE: float, alpha_g: float = 1.2, alpha_d: float = 1.2, be
 
 def update_energy(E: float, neighbors_E: np.ndarray, dE_old: float,
                   gamma: float = 0.15,
-                  alpha_g: float = 1.5,
-                  alpha_d: float = 1.8,
+                  alpha_g: float = 0.2,
+                  alpha_d: float = 0.2,
                   beta: float = 1.0) -> tuple[float, float, float]:
     E_diff = spatial_diffusion(E, neighbors_E, gamma)
     

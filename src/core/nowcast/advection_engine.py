@@ -14,12 +14,13 @@ class AdvectionEngine:
     _MIN_FEEDBACK_MM = 0.02
     _BIAS_MIN = 0.45
     _BIAS_MAX = 1.60
-    _BIAS_ALPHA_UP = 0.14
-    _BIAS_ALPHA_DOWN = 0.30
+    _BIAS_ALPHA_UP = 0.35
+    _BIAS_ALPHA_DOWN = 0.55
     _DRY_DECAY = 0.003
     _WINDOW_SIZE = 9
     _DRY_GUARD_RECENT_MM = 0.03
     _DRY_GUARD_PRED_MAX = 0.20
+    _STATIC_HORIZON_CALIBRATION = {"15m": 1.0, "1h": 1.0, "2h": 1.065}
 
     def __init__(
         self,
@@ -38,6 +39,8 @@ class AdvectionEngine:
             step: deque(maxlen=self._WINDOW_SIZE)
             for step in HORIZON_STEPS.values()
         }
+        self._matured_actual_by_step = {step: 0.0 for step in HORIZON_STEPS.values()}
+        self._matured_pred_by_step = {step: 0.0 for step in HORIZON_STEPS.values()}
 
     def update_feedback(self, actual_map: float, preds: dict) -> None:
         # Update calibration from mature forecasts.
@@ -57,10 +60,15 @@ class AdvectionEngine:
             pred = float(past["preds"].get(horizon, 0.0) or 0.0)
             actual = sum(item["actual"] for item in self._error_history[-step:])
             self._update_step_bias(step, pred, actual)
+        self._nudge_two_hour_bias_from_one_hour_feedback()
 
     def correct_cumulative_volumes(self, volumes: dict[str, float]) -> dict[str, float]:
         return {
-            horizon: float(volumes.get(horizon, 0.0) or 0.0) * self._bias_by_step.get(step, 1.0)
+            horizon: (
+                float(volumes.get(horizon, 0.0) or 0.0)
+                * self._bias_by_step.get(step, 1.0)
+                * self._STATIC_HORIZON_CALIBRATION.get(horizon, 1.0)
+            )
             for horizon, step in HORIZON_STEPS.items()
         }
 
@@ -84,10 +92,18 @@ class AdvectionEngine:
             np.log(self._BIAS_MAX),
         ))
         self._ratio_windows[step].append(log_ratio)
-        target = float(np.exp(np.median(self._ratio_windows[step])))
+        self._matured_actual_by_step[step] += actual
+        self._matured_pred_by_step[step] += pred
+        if self._matured_pred_by_step[step] > self._MIN_FEEDBACK_MM:
+            target = self._matured_actual_by_step[step] / self._matured_pred_by_step[step]
+            target = float(np.clip(target, self._BIAS_MIN, self._BIAS_MAX))
+        else:
+            target = float(np.exp(np.median(self._ratio_windows[step])))
         current = self._bias_by_step[step]
-        alpha_up = 0.081 if step == HORIZON_STEPS["2h"] else self._BIAS_ALPHA_UP
-        alpha = self._BIAS_ALPHA_DOWN if target < current else alpha_up
+        if step == HORIZON_STEPS["2h"]:
+            alpha = 0.80
+        else:
+            alpha = self._BIAS_ALPHA_DOWN if target < current else self._BIAS_ALPHA_UP
         self._bias_by_step[step] = float(np.clip(
             (1.0 - alpha) * current + alpha * target,
             self._BIAS_MIN,
@@ -97,6 +113,24 @@ class AdvectionEngine:
     def _decay_step_bias(self, step: int) -> None:
         current = self._bias_by_step[step]
         self._bias_by_step[step] = current + (1.0 - current) * self._DRY_DECAY
+
+    def _nudge_two_hour_bias_from_one_hour_feedback(self) -> None:
+        one_hour_step = HORIZON_STEPS["1h"]
+        two_hour_step = HORIZON_STEPS["2h"]
+        pred = self._matured_pred_by_step[one_hour_step]
+        if pred <= self._MIN_FEEDBACK_MM:
+            return
+        target = self._matured_actual_by_step[one_hour_step] / pred
+        target = float(np.clip(target, self._BIAS_MIN, self._BIAS_MAX))
+        current = self._bias_by_step[two_hour_step]
+        if target >= current:
+            return
+        alpha = 0.60
+        self._bias_by_step[two_hour_step] = float(np.clip(
+            (1.0 - alpha) * current + alpha * target,
+            self._BIAS_MIN,
+            self._BIAS_MAX,
+        ))
 
     @staticmethod
     def _weighted_median(values: list[float], weights: list[float]) -> float:
