@@ -1,4 +1,4 @@
-"""Dash Application: holds the orchestrator, data service, state, and callbacks."""
+# Dash App: orchestrator, data service, state, callbacks
 import os
 from datetime import datetime as dt
 
@@ -15,8 +15,9 @@ from src.dashboard.dashboard_layout import DashboardLayout
 from src.dashboard.session_manager import SessionManager
 from src.dashboard.report_builder import ReportBuilder
 
-from src.dashboard.dashboard_callbacks import DashboardCallbacks
-
+from src.dashboard.callbacks_ui import UICallbacks
+from src.dashboard.callbacks_data import DataCallbacks
+from src.dashboard.callbacks_render import RenderCallbacks
 class NowcastingDashboard:
 
     def __init__(self):
@@ -39,9 +40,10 @@ class NowcastingDashboard:
             
         self.app.layout = serve_layout
         
-        # Register callbacks from the separated module
-        DashboardCallbacks(self).register()
-
+        # Register callbacks
+        UICallbacks(self).register()
+        DataCallbacks(self).register()
+        RenderCallbacks(self).register()
     @property
     def server(self):
         return self.app.server

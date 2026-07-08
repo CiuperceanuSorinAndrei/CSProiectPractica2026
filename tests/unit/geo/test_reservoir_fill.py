@@ -1,8 +1,5 @@
-"""Teste pentru curba stage-storage si estimarea umplerii pornind de la nivelul curent.
-
-Majoritatea sunt pure (fara DEM/SWOT/shapefile). Testele de integrare optionale verifica
-datele precalculate (dem_augment.json / reservoir_levels.json) daca exista.
-"""
+# Stage-storage and reservoir filling tests.
+# Integration tests verify precalculated data (dem_augment.json / reservoir_levels.json) if available.
 import os
 import json
 
@@ -49,19 +46,19 @@ def test_curve_roundtrip_dict():
 
 
 def test_submerged_branch_extends_below_nnr():
-    # con: adancime NNR->fund = 2*V/A = 2*1e6/1e5 = 20 m; V(fund)=0, V(NNR)=1e6
+    # Cone depth NNR->bottom = 2*V/A = 2*1e6/1e5 = 20 m; V(bottom)=0, V(NNR)=1e6
     c = _prism().with_submerged_branch(surface_area_m2=100_000.0)
     assert c.levels_m[0] == pytest.approx(-20.0)
     assert c.volumes_m3[0] == pytest.approx(0.0, abs=1.0)
-    assert c.volume_at_level(0.0) == pytest.approx(1_000_000.0)         # NNR neschimbat
-    # la jumatatea adancimii volumul e (0.5)^2 = 25% din NNR
+    assert c.volume_at_level(0.0) == pytest.approx(1_000_000.0)         # Unchanged NNR
+    # At half depth volume is (0.5)^2 = 25% of NNR
     assert c.volume_at_level(-10.0) == pytest.approx(250_000.0, rel=0.05)
 
 
 def test_volume_for_wse_uses_waterline():
     c = _prism().with_submerged_branch(100_000.0)   # waterline_m = 100
-    assert c.volume_for_wse(100.0) == pytest.approx(1_000_000.0)        # la NNR
-    assert c.volume_for_wse(90.0) < 1_000_000.0                          # 10 m sub NNR -> mai putin
+    assert c.volume_for_wse(100.0) == pytest.approx(1_000_000.0)        # At NNR
+    assert c.volume_for_wse(90.0) < 1_000_000.0                          # 10m below NNR -> less volume
 
 
 # --- ReservoirFillEstimator ---------------------------------------------------------------
@@ -76,7 +73,7 @@ def _reservoir(catchment_km2=100.0, v_nnr=10_000_000.0, area_m2=1_000_000.0, cur
 
 
 def test_estimate_catchment_runoff_from_nnr_default():
-    # fara nivel curent -> start la NNR. 10 mm, C=0.35, bazin 100 km2 -> inflow 350000 m3
+    # No current level -> start at NNR. 10 mm, C=0.35, catchment 100 km2 -> inflow 350000 m3
     res = ReservoirFillEstimator.estimate(10.0, _reservoir(), runoff_coeff=0.35)
     assert res.inflow_source == "catchment"
     assert res.inflow_m3 == pytest.approx(350_000.0)
@@ -88,13 +85,13 @@ def test_estimate_catchment_runoff_from_nnr_default():
 
 
 def test_estimate_starts_from_swot_current_level():
-    # lac la 60% din NNR (SWOT) -> pornim de acolo, nu de la NNR
+    # Lake at 60% NNR (SWOT) -> start there, not from NNR
     r = _reservoir(current_volume_m3=6_000_000.0, level_source="swot")
     res = ReservoirFillEstimator.estimate(10.0, r, 0.35)
     assert res.level_source == "swot"
     assert res.start_fill_pct == pytest.approx(60.0)
     assert res.new_fill_pct == pytest.approx(63.5)
-    assert res.level_before_m < 0.0                                     # sub NNR
+    assert res.level_before_m < 0.0                                     # Below NNR
     assert res.delta_level_m > 0.0
 
 
@@ -102,7 +99,7 @@ def test_estimate_direct_rain_fallback_without_catchment():
     r = _reservoir(catchment_km2=None)
     res = ReservoirFillEstimator.estimate(10.0, r, 0.35)
     assert res.inflow_source == "direct_rain"
-    assert res.inflow_m3 == pytest.approx(10_000.0)                     # depth*area, fara C
+    assert res.inflow_m3 == pytest.approx(10_000.0)                     # Depth*area, no C
 
 
 def test_estimate_overtops_flag():
@@ -111,27 +108,26 @@ def test_estimate_overtops_flag():
 
 
 def test_water_balance_subtracts_outflow_and_evaporation():
-    # start 6e6; inflow=0.35*0.01*1e8=350000; outflow=1 m3/s*240h*3600=864000;
-    # evap=4 mm/zi *1e6 m2 *10 zile /1000 = 40000 -> new = 6e6+350000-864000-40000 = 5.446e6
+    # Start 6e6; inflow=350000; outflow=864000; evap=40000 -> new = 5.446e6
     r = _reservoir(current_volume_m3=6_000_000.0, level_source="swot")
     res = ReservoirFillEstimator.estimate(10.0, r, 0.35, duration_hours=240, evap_mm_day=4.0, outflow_m3s=1.0)
     assert res.outflow_m3 == pytest.approx(864_000.0)
     assert res.evap_m3 == pytest.approx(40_000.0)
     assert res.new_volume_m3 == pytest.approx(5_446_000.0)
     assert res.new_fill_pct == pytest.approx(54.46)
-    assert res.delta_level_m < 0.0                       # iesirile > intrare -> nivelul scade
+    assert res.delta_level_m < 0.0                       # Outflow > Inflow -> level drops
 
 
 def test_no_duration_means_no_losses():
     r = _reservoir(current_volume_m3=6_000_000.0, level_source="swot")
-    # fara durata, evacuarea/evaporarea nu se aplica (compatibil cu comportamentul anterior)
+    # Without duration, outflow/evap don't apply
     res = ReservoirFillEstimator.estimate(10.0, r, 0.35, evap_mm_day=4.0, outflow_m3s=1.0)
     assert res.outflow_m3 == 0.0 and res.evap_m3 == 0.0
     assert res.new_volume_m3 == pytest.approx(6_350_000.0)
 
 
 def test_new_volume_clamped_nonnegative():
-    # iesiri uriase nu pot duce volumul sub 0
+    # Massive outflows cannot drop volume below 0
     r = _reservoir(current_volume_m3=1_000_000.0, catchment_km2=None, level_source="swot")
     res = ReservoirFillEstimator.estimate(0.0, r, 0.35, duration_hours=1000, outflow_m3s=100.0)
     assert res.new_volume_m3 == 0.0
@@ -142,13 +138,13 @@ def test_estimate_none_when_no_reservoir_or_capacity(reservoir):
     assert ReservoirFillEstimator.estimate(10.0, reservoir, 0.35) is None
 
 
-# --- Integrare cu datele precalculate (optional) ------------------------------------------
+# --- Optional integration tests with precalculated data ---
 
-@pytest.mark.skipif(not os.path.exists(AUGMENT), reason="dem_augment.json nu e construit")
+@pytest.mark.skipif(not os.path.exists(AUGMENT), reason="dem_augment.json not built")
 def test_dem_augment_known_reservoir():
     aug = json.load(open(AUGMENT, encoding="utf-8"))
     if "Vidraru" not in aug:
-        pytest.skip("Vidraru inca neprocesat")
+        pytest.skip("Vidraru not processed yet")
     v = aug["Vidraru"]
     assert v["source"] == "dem"
     assert v["catchment_km2"] == pytest.approx(294, abs=25)
@@ -157,26 +153,26 @@ def test_dem_augment_known_reservoir():
     assert curve.volume_at_level(5.0) > curve.v_nnr_m3
 
 
-@pytest.mark.skipif(not os.path.exists(LEVELS), reason="reservoir_levels.json nu e construit")
+@pytest.mark.skipif(not os.path.exists(LEVELS), reason="reservoir_levels.json not built")
 def test_swot_levels_have_plausible_wse():
     lv = json.load(open(LEVELS, encoding="utf-8"))
     assert len(lv) > 0
     for name, d in lv.items():
         assert d["source"] == "swot"
-        assert -100.0 < d["wse_m"] < 3000.0            # cote plauzibile in Romania
+        assert -100.0 < d["wse_m"] < 3000.0            # Plausible elevations in Romania
 
 
-@pytest.mark.skipif(not os.path.exists(LEVELS), reason="reservoir_levels.json nu e construit")
+@pytest.mark.skipif(not os.path.exists(LEVELS), reason="reservoir_levels.json not built")
 def test_covered_scope_is_data_driven():
     from src.geo.reservoir_loader import ReservoirLoader
     covered = ReservoirLoader.get_covered_reservoirs()
     all_res = ReservoirLoader.get_all_reservoirs()
-    assert 0 < len(covered) < len(all_res)             # scop restrans fata de shapefile-ul complet
+    assert 0 < len(covered) < len(all_res)             # Limited scope vs full shapefile
     assert all(r["level_source"] in ("swot", "s2") for r in covered.values())
     assert all(r["current_volume_m3"] is not None for r in covered.values())
 
 
-@pytest.mark.skipif(not os.path.exists(LEVELS_S2), reason="reservoir_levels_s2.json nu e construit")
+@pytest.mark.skipif(not os.path.exists(LEVELS_S2), reason="reservoir_levels_s2.json not built")
 def test_s2_levels_present_and_plausible():
     lv = json.load(open(LEVELS_S2, encoding="utf-8"))
     assert len(lv) > 0

@@ -1,4 +1,4 @@
-"""UI structure construction (sidebar + content)."""
+# UI structure construction (sidebar + content).
 import uuid
 from dash import dcc, html
 import dash_bootstrap_components as dbc
@@ -9,7 +9,7 @@ from src.dashboard.frame_store import FrameStore
 
 
 class DashboardLayout:
-    """Builds the UI structure (sidebar + content)."""
+    # Builds the UI structure (sidebar + content).
 
     def __init__(self, store: FrameStore):
         self._store = store
@@ -228,7 +228,6 @@ class DashboardLayout:
                 [
                     html.H6("Time Control", className="fw-bold mb-0", style={"margin-right": "5px"}),
                     # Small spinner to the right of the title, visible while the main callback
-                    # generates a new image (sentinel is an output, so Dash marks it "loading").
                     dbc.Spinner(
                         html.Div(id="img-loading-sentinel"),
                         size="sm", color="info", type="border",

@@ -4,7 +4,7 @@ from src.core.tracking.storm_filter import StormFilter
 from src.core.domain import StormCell
 
 class KinematicUpdater:
-    """Manages the Kalman filter bank and kinematic updates."""
+    # Manage Kalman filter bank.
     def __init__(self):
         self._kalman_bank: dict[str, StormFilter] = {}
 
@@ -23,7 +23,7 @@ class KinematicUpdater:
         tracked_cell.v_y = kf.v_y
         tracked_cell.uncertainty_trace = kf.positional_uncertainty
 
-        # Centroid prediction based on Constant Velocity
+        # Centroid prediction.
         predicted_centroid_x = kf.x + kf.v_x
         predicted_centroid_y = kf.y + kf.v_y
         tracked_cell.predicted_centroid_x = float(predicted_centroid_x)

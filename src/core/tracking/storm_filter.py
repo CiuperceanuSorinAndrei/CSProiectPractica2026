@@ -1,8 +1,4 @@
-"""StormFilter: Kalman predictive state for a storm.
-
-Implements a Constant Velocity (CV) model with a 4D state:
-[x, y, vx, vy]
-"""
+# Kalman predictive state (Constant Velocity 4D state).
 from __future__ import annotations
 
 import numpy as np
@@ -10,7 +6,7 @@ from filterpy.kalman import KalmanFilter
 
 
 class StormFilter:
-    """Encapsulates the Kalman filter (Constant Velocity) for tracking cells."""
+    # Kalman filter tracking.
     
     def __init__(
         self,
@@ -18,10 +14,10 @@ class StormFilter:
         initial_vy: float = 0.0, initial_vx: float = 0.0,
         initial_area: float = 1.0, initial_d_area: float = 0.0
     ):
-        # Area parameters kept for backwards compatibility but ignored
+        # Kept for backward compatibility.
         self._kf = KalmanFilter(dim_x=4, dim_z=2)
 
-        dt = 1.0  # timp arbitrar = 1 frame
+        dt = 1.0
 
         # State: [x, y, vx, vy]
         self._kf.x = np.array([
@@ -37,7 +33,7 @@ class StormFilter:
 
     @staticmethod
     def _build_transition_matrix(dt: float) -> np.ndarray:
-        """Transition matrix F (Constant Velocity Model)."""
+        # Transition matrix.
         return np.array([
             [1.0, 0.0,  dt, 0.0], # x
             [0.0, 1.0, 0.0,  dt], # y
@@ -47,7 +43,7 @@ class StormFilter:
 
     @staticmethod
     def _build_measurement_matrix() -> np.ndarray:
-        """Observation matrix H - measuring x, y directly."""
+        # Observation matrix.
         return np.array([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0]
@@ -55,7 +51,7 @@ class StormFilter:
 
     @staticmethod
     def _build_process_noise(dt: float) -> np.ndarray:
-        """Process noise matrix Q for Constant Velocity."""
+        # Process noise matrix.
         var = 0.1
         Q = np.zeros((4, 4))
         Q[0, 0] = Q[1, 1] = (dt**4 / 4.0) * var
@@ -65,7 +61,7 @@ class StormFilter:
 
     @staticmethod
     def _build_measurement_noise() -> np.ndarray:
-        """Measurement noise matrix R for x, y."""
+        # Measurement noise matrix.
         return np.array([
             [10.0, 0.0],
             [0.0, 10.0]
@@ -121,5 +117,5 @@ class StormFilter:
 
     @property
     def positional_uncertainty(self) -> float:
-        """Trace of covariance matrix for kinematic coordinates (x, y, vx, vy)."""
+        # Kinematic covariance trace.
         return float(np.trace(self._kf.P[0:4, 0:4]))

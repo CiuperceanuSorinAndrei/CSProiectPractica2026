@@ -18,7 +18,7 @@ class CacheManager:
         self._geom: FrameGeometry | None = None
         self._prep_cache: OrderedDict[str, FramePrep] = OrderedDict()
         
-        # Warm-up de fundal
+        # Background warm-up.
         self._last_activity: float = 0.0
         self._warm_lock = threading.Lock()
         self._warm_thread: threading.Thread | None = None
@@ -38,7 +38,9 @@ class CacheManager:
         self, file_path: str, lon_min: float, lon_max: float, lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float, polygon=None, catchment_polygon=None
     ) -> FramePrep | None:
-        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
+        poly_hash = hash(str(polygon)) if polygon else 0
+        catch_hash = hash(str(catchment_polygon)) if catchment_polygon else 0
+        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, poly_hash, catch_hash)
         if geom_key != self._geom_key:
             self._geom_key = geom_key
             self._geom = None
@@ -74,7 +76,9 @@ class CacheManager:
         self, file_paths: list[str], lon_min: float, lon_max: float, lat_min: float, lat_max: float,
         center_lat: float, center_lon: float, radius_km: float, polygon=None, catchment_polygon=None
     ) -> None:
-        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, id(polygon))
+        poly_hash = hash(str(polygon)) if polygon else 0
+        catch_hash = hash(str(catchment_polygon)) if catchment_polygon else 0
+        geom_key = (lon_min, lon_max, lat_min, lat_max, center_lat, center_lon, radius_km, poly_hash, catch_hash)
         with self._warm_lock:
             alive = self._warm_thread is not None and self._warm_thread.is_alive()
             if self._warm_complete_key == geom_key or (self._warm_geom_key == geom_key and alive):

@@ -8,10 +8,7 @@ class KinematicAdvector:
         shift_y: float, 
         shift_x: float
     ) -> np.ndarray:
-        """Advects the precipitation field using a uniform translation vector.
-        
-        Uses scipy.ndimage.shift with order=1 (bilinear) and cval=0.0 (safe boundary padding).
-        """
+        # Uniform translation advection.
         # Shift expects (y_shift, x_shift)
         shifted = scipy.ndimage.shift(
             rain_rate, 

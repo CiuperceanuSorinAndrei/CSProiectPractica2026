@@ -3,7 +3,7 @@ import numpy as np
 from src.core.domain import StormCell
 
 class CellLifecycleManager:
-    """Gestioneaza istoricul si tendintele de crestere ale celulelor convective."""
+    # Manage history and growth trends.
     
     @staticmethod
     def transfer_history(c_cell: StormCell, tracked_cell: StormCell, best_match: StormCell | None, c_area: float) -> None:
@@ -56,5 +56,5 @@ class CellLifecycleManager:
         else:
             recent_area_trend = raw_area_trend
 
-        # Area trend este strict izolat de volum (morfologie pura)
+        # Area trend is strictly isolated from volume (pure morphology).
         return float(recent_area_trend)

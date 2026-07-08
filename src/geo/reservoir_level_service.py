@@ -1,10 +1,5 @@
-"""Serviciu care furnizeaza cota curenta a unui lac pentru intervalul de simulare selectat.
-
-Cand utilizatorul alege un alt interval de timp, in loc de snapshot-ul static (cea mai recenta
-observatie), interogheaza Sentinel-2 (Sentinel Hub) pentru observatia cea mai apropiata de data
-intervalului, o inverseaza prin curba DEM si suprascrie nivelul. Rezultatul e memoizat per
-(lac, data). Fara credentiale sau la esec/nori, se cade pe nivelul static.
-"""
+# Service providing the current lake level for the selected simulation interval.
+# Queries Sentinel-2 for closest observation, calculates level via DEM curve, and memoizes.
 from __future__ import annotations
 
 import time
@@ -19,13 +14,13 @@ _cache: dict[tuple, dict | None] = {}
 _token: str | None = None
 _token_ts: float = 0.0
 
-_TIMEOUT = 90.0            # secunde per cerere Sentinel Hub (nu bloca dashboard-ul)
-_WINDOWS = ((30, 0), (60, 0), (90, 0))   # DO NOT look into the future! (zile inainte, dupa) tinta
+_TIMEOUT = 90.0            # seconds per Sentinel Hub request
+_WINDOWS = ((30, 0), (60, 0), (90, 0))   # DO NOT look into the future! (days before, days after)
 
 
 def _get_token() -> str:
     global _token, _token_ts
-    if _token is None or (time.time() - _token_ts) > 480:   # reinnoire la ~8 min
+    if _token is None or (time.time() - _token_ts) > 480:   # renew after ~8 min
         _token = s2.get_token(config.SH_ID, config.SH_SECRET)
         _token_ts = time.time()
     return _token
@@ -51,7 +46,7 @@ def _fetch(reservoir: dict, target: str) -> dict | None:
         if vfrac >= 0.5:
             break
     if wse is None or vfrac < 0.3 or area < 0.05 * (reservoir.get("surface_area_m2") or 0.0):
-        return None                     # innorat / arie implauzibila / fara scena -> fara citire
+        return None                     # cloudy / implausible area / no scene -> skip
 
     try:
         as_of = s2.best_scene_date(_get_token(), poly, dfrom, dto)
@@ -63,9 +58,7 @@ def _fetch(reservoir: dict, target: str) -> dict | None:
 
 
 def with_interval_level(reservoir: dict | None, name: str, time_range: dict | None) -> dict | None:
-    """Copie a `reservoir` cu nivelul din intervalul selectat (Sentinel-2 la cerere), memoizat per
-    (lac, data). Fallback la reservoir-ul original (nivel static) daca lipsesc credentialele, nu e
-    selectat un interval, sau observatia nu e de incredere. Non-blocant pe erori."""
+    # Returns a copy of reservoir with level for selected interval (memoized Sentinel-2 fetch)
     if not reservoir or not name:
         return reservoir
     if not config.SH_ID or not config.SH_SECRET:
@@ -104,10 +97,6 @@ def with_interval_level(reservoir: dict | None, name: str, time_range: dict | No
                 # Estimate new volume using ReservoirFillEstimator
                 days = (target_dt.date() - as_of_dt.date()).days
                 # Simulate over the gap (duration_hours = days * 24)
-                # To avoid double-dipping evaporation in estimate(), we pass 0 for dynamic evap since we have real evap_mm, 
-                # but wait: ReservoirFillEstimator calculates its own dynamic evaporation now.
-                # Actually, ReservoirFillEstimator is meant for a single radar event. It's better to just do the math here directly.
-                
                 v_start = merged.get("current_volume_m3") or merged.get("max_volume_m3", 0.0)
                 catch_km2 = merged.get("catchment_km2") or 0.0
                 area_m2 = merged.get("surface_area_m2") or 0.0

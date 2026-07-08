@@ -1,4 +1,4 @@
-"""Pachet geo: proiectii si intersectii cu poligoane."""
+# Geo utilities for projections and polygon intersections.
 from .projection import GeoProjection
 from .intersection import PolygonIntersection
 

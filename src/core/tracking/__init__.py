@@ -1,1 +1,1 @@
-"""Tracking cinematic frame-to-frame: matching KD-Tree, filtre Kalman, optical flow, lifecycle."""
+# Kinematic frame-to-frame tracking.

@@ -26,8 +26,7 @@ class StormCellDetector:
         self._large_cell_threshold = large_cell_threshold
         self._small_cell_max_area = small_cell_max_area
 
-    # Detecteaza nucleele de furtuna folosind doua praguri (mare si mic) pentru a
-    # prinde atat celulele principale cat si cele mici care nu se suprapun cu ele.
+    # Detect storm cells using dual thresholds to capture primary and small isolated cells.
     def extract_cells(self, rain_matrix: np.ndarray) -> list[StormCell]:
         small_thr = self._threshold if self._small_cell_threshold is None else self._small_cell_threshold
         large_thr = self._threshold if self._large_cell_threshold is None else self._large_cell_threshold
@@ -35,11 +34,11 @@ class StormCellDetector:
         struct = np.ones((3, 3))
         large_mask = ndi.binary_opening(rain_matrix >= large_thr, structure=struct)
 
-        # Etichetare simpla a componentelor conexe
+        # Label connected components.
         large_labels = self._label_connected_components(rain_matrix, large_mask)
         cells = self._extract_components_from_labels(rain_matrix, large_labels, self._min_size)
 
-        # Daca pragurile sunt identice, Pass 2 e inutil (risipa de CPU)
+        # Skip Pass 2 if thresholds match.
         if abs(small_thr - large_thr) < 1e-5 and self._small_cell_max_area is None:
             return cells
 
@@ -49,8 +48,8 @@ class StormCellDetector:
     def _append_non_overlapping_small_cells(
         self, rain_matrix: np.ndarray, cells: list[StormCell], small_thr: float, struct: np.ndarray
     ) -> None:
-        """Pass 2: adauga (in-place) celulele mici care NU se suprapun cu nucleele mari deja gasite."""
-        # Construim masca de pixeli deja acoperiti de celulele mari (vectorizat)
+        # Pass 2: Add non-overlapping small cells.
+        # Mask pixels already covered by large cells.
         seen_mask = np.zeros(rain_matrix.shape, dtype=bool)
         for cell in cells:
             coords = np.asarray(cell.coords)
@@ -66,7 +65,7 @@ class StormCellDetector:
         next_id = len(cells) + 1
         for cell in small_cells:
             coords = np.asarray(cell.coords)
-            # Daca exista ORICE pixel care e deja in seen_mask, ignoram celula
+            # Ignore cell if any of its pixels overlap with seen_mask.
             if len(coords) > 0 and np.any(seen_mask[coords[:, 0], coords[:, 1]]):
                 continue
             cell.id = next_id
@@ -75,7 +74,7 @@ class StormCellDetector:
 
     @staticmethod
     def _label_connected_components(rain_matrix: np.ndarray, base_mask: np.ndarray) -> np.ndarray:
-        """Aplica etichetarea componentelor conexe (Connected Component Labeling)."""
+        # Apply Connected Component Labeling.
         labels, _ = ndi.label(base_mask)
         return labels
 
@@ -145,15 +144,15 @@ class StormCellDetector:
 
 # --- Testing ---
 if __name__ == "__main__":
-    # Matrice sintetica cu doua formatiuni de ploaie
+    # Synthetic test matrix.
     rain_matrix = np.zeros((20, 20))
-    rain_matrix[3:8, 3:8] = 4.5      # celula mare (peste min_size)
-    rain_matrix[14:16, 14:16] = 2.0  # celula mica (sub min_size)
+    rain_matrix[3:8, 3:8] = 4.5      # Large cell
+    rain_matrix[14:16, 14:16] = 2.0  # Small cell
 
     detector = StormCellDetector(threshold=0.5, min_size=5)
     cells = detector.extract_cells(rain_matrix)
 
-    print(f"Celule detectate: {len(cells)}")
+    print(f"Detected cells: {len(cells)}")
     for cell in cells:
         data = cell.as_dict()
         print({k: v for k, v in data.items() if k != "coords"}, "| coords:", len(cell.coords))

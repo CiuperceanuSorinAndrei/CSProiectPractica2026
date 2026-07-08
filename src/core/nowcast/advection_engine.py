@@ -1,4 +1,4 @@
-"""Rigid Advection Engine (Lagrangian Persistence)."""
+# Lagrangian Advection Engine.
 from __future__ import annotations
 
 from collections import deque
@@ -29,7 +29,7 @@ class AdvectionEngine:
         self.reset_feedback()
 
     def reset_feedback(self) -> None:
-        """Reset online calibration state to neutral."""
+        # Reset calibration.
         self.dynamic_bias_correction: float = 1.0
         self._pid_bias: float = 1.0
         self._error_history: list[dict] = []
@@ -40,7 +40,7 @@ class AdvectionEngine:
         }
 
     def update_feedback(self, actual_map: float, preds: dict) -> None:
-        """Update calibration from issued cumulative forecasts after they mature."""
+        # Update calibration from mature forecasts.
         self._error_history.append({
             "actual": float(actual_map or 0.0),
             "preds": dict(preds or {})
@@ -186,7 +186,7 @@ class AdvectionEngine:
         horizons: list[tuple[int, str]],
         roi_mask: np.ndarray = None,
     ) -> dict[int, np.ndarray]:
-        """Extrapolate precipitation (Hydrological Catchment Nowcasting)."""
+        # Extrapolate precipitation.
         rain_rate = np.nan_to_num(rain_rate, copy=True, nan=0.0).astype(np.float32, copy=False)
         
         float_preds = {}
@@ -233,7 +233,7 @@ class AdvectionEngine:
             roi_confidence = float(np.clip(np.mean(step_weights), 0.0, 1.0)) if step_weights else 0.0
             tracking_confidence = centroid_confidence * (0.35 + 0.35 * count_confidence + 0.30 * roi_confidence)
             
-            # Uniform advection via scipy spatial shift
+            # Uniform advection.
             shift_y = step * roi_vy
             shift_x = step * roi_vx
             
@@ -247,7 +247,7 @@ class AdvectionEngine:
                 rain_rate, step * roi_vy * 0.50, step * roi_vx * 0.50
             )
             
-            # Leave pixels unaltered. Thresholding is applied later by Evaluator.
+            # Blend advected components.
             damped_weight = 0.35 * (1.0 - tracking_confidence)
             mass_weight = 0.25 * tracking_confidence
             roi_weight = max(1.0 - damped_weight - mass_weight, 0.0)
@@ -258,20 +258,19 @@ class AdvectionEngine:
                 + damped_shifted * damped_weight
             ) / max(total_weight, 1e-6)
             
-            # Bounded mass conservation (clamped to [0.80, 1.25] to avoid inflating severe cores)
-            # Simulate organic thermodynamic step
-            current_E, current_dE, R_step = update_energy(current_E, np.array([]), current_dE)
-            thermo_multiplier *= R_step
-            
-            # Online bias corrects only displayed cumulative volumes, not advected physical field
-            shifted = shifted * thermo_multiplier
-
-            # Bounded mass conservation: gently correct total precipitation mass
+            # Correct numerical diffusion/boundary loss before thermodynamics.
             orig_mass = float(np.nansum(rain_rate))
             shifted_mass = float(np.nansum(shifted))
             if orig_mass > 0.01 and shifted_mass > 0.01:
-                mass_ratio = np.clip(orig_mass / shifted_mass, 0.80, 1.25)
+                mass_ratio = np.clip(orig_mass / shifted_mass, 0.90, 1.10)
                 shifted = shifted * mass_ratio
+                
+            # Simulate organic thermodynamic step.
+            current_E, current_dE, R_step = update_energy(current_E, np.array([]), current_dE)
+            thermo_multiplier *= R_step
+            
+            # Apply thermodynamics.
+            shifted = shifted * thermo_multiplier
 
             if (
                 tracking_confidence < 0.35

@@ -6,7 +6,7 @@ import numpy as np
 
 @dataclass
 class StormCell:
-    """Domain object for a storm cell."""
+    # Storm cell domain model.
     id: int = 0
     cell_id: str = ""
     is_tracked: bool = False
@@ -52,18 +52,23 @@ class StormCell:
     cell_history: list[dict[str, Any]] = field(default_factory=list)
     
     def as_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization."""
-        return asdict(self)
+        # Fast serialization, explicitly excluding large numpy arrays.
+        import dataclasses
+        return {
+            f.name: getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if f.name not in ('coords', 'predicted_coords') and not f.name.startswith('_')
+        }
 
     def initialize_simulation_state(self) -> None:
-        """Initialize state for nowcast advection."""
+        # Initialize state for nowcast advection.
         self.flow_vec_smooth_x = self.v_x
         self.flow_vec_smooth_y = self.v_y
         self.predicted_centroid_x = self.centroid_x
         self.predicted_centroid_y = self.centroid_y
 
     def clone(self) -> StormCell:
-        """Create a fast shallow copy, making new lists for histories to prevent mutation."""
+        # Fast shallow copy, making new lists for histories to prevent mutation.
         import dataclasses
         kwargs = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
         for field in ('centroid_history', 'area_history', 'cell_history'):

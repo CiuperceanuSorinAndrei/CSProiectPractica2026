@@ -1,4 +1,4 @@
-"""Evaluator for global metrics and volume estimation."""
+# Global metrics and volume estimator.
 from __future__ import annotations
 
 import numpy as np
@@ -7,8 +7,6 @@ from src.config import RAIN_THRESHOLD_MIN
 
 
 class Evaluator:
-    # Global metrics calculation was removed (Hydrological Nowcasting Pivot).
-
     @staticmethod
     def calculate_volumes(
         rain_rate: np.ndarray,
@@ -18,26 +16,28 @@ class Evaluator:
         horizons: list[tuple[int, str]],
         roi_mask_fractional: np.ndarray = None
     ) -> tuple[float, dict[str, float], dict[str, float]]:
-        """Calculates the current volume in ROI and accumulated volume per horizon."""
+        # Calculate MAP in ROI and accumulated MAP per horizon.
         
         frac_mask = roi_mask_fractional if roi_mask_fractional is not None else roi_mask.astype(np.float32)
         
-        # Hydrological conversion from absolute m3 to Mean Areal Precipitation (MAP) in L/m2 (mm)
+        # Precompute area weights for 15-minute accumulation (0.25 hours)
+        weights = pixel_area_km2 * frac_mask * 0.25
+        
+        # Convert m3 to Mean Areal Precipitation (MAP) in mm.
         area_km2 = float(np.nansum(pixel_area_km2 * frac_mask))
         if area_km2 < 1e-6:
             return 0.0, {}, {}
             
-        rain_rate_filtered = np.where(rain_rate >= RAIN_THRESHOLD_MIN, rain_rate, 0.0)
-        # MAP = average rain depth over the area in 15 mins (rain_rate * 0.25)
-        roi_map_mm = float(np.nansum(rain_rate_filtered * pixel_area_km2 * frac_mask * 0.25) / area_km2)
+        valid_rain = rain_rate >= RAIN_THRESHOLD_MIN
+        roi_map_mm = float(np.nansum(rain_rate[valid_rain] * weights[valid_rain]) / area_km2)
         
-        # Calculate the estimated volume for each future 15-minute step
+        # Estimate MAP for future 15-minute steps.
         step_volumes = {}
         for step, pred_matrix in float_preds.items():
-            pred_filtered = np.where(pred_matrix >= RAIN_THRESHOLD_MIN, pred_matrix, 0.0)
-            step_volumes[step] = float(np.nansum(pred_filtered * pixel_area_km2 * frac_mask * 0.25) / area_km2)
+            valid_pred = pred_matrix >= RAIN_THRESHOLD_MIN
+            step_volumes[step] = float(np.nansum(pred_matrix[valid_pred] * weights[valid_pred]) / area_km2)
             
-        # Accumulate the volume for each horizon (e.g., 1h = step 1 + step 2 + step 3 + step 4)
+        # Accumulate MAP for each horizon.
         predicted_volumes_accumulation = {}
         instant_predicted_volumes = {}
         for target_step, name in horizons:

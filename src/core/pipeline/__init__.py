@@ -1,1 +1,1 @@
-"""Orchestrare per-cadru: procesarea unui cadru complet + cache de preprocesare si warm-up."""
+# Per-frame orchestration: full frame processing + cache and warm-up.

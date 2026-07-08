@@ -1,7 +1,11 @@
-# Virtual environments
+# Virtual environments & Python artifacts
 .venv/
 env/
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
 
 # Data
 data/raw/

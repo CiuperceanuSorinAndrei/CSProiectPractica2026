@@ -1,22 +1,9 @@
-"""Estimarea umplerii unui lac de acumulare din precipitatia acumulata.
-
-Model:
-  1. Debit de intrare = scurgere din bazinul hidrografic (delimitat din DEM):
-         inflow = C_runoff * (MAP_mm / 1000) * suprafata_bazin
-     (fara bazin se cade pe ploaia directa pe luciul apei).
-  2. Volumul de pornire = nivelul curent real al lacului (SWOT WSE -> volum pe curba
-     stage-storage), sau NNR daca lacul nu are observatie SWOT.
-  3. Volumul de intrare se adauga peste cel de pornire si se citeste pe curba stage-storage
-     noul nivel si gradul de umplere.
-
-Suprafata bazinului, curba si nivelul curent vin din `ReservoirLoader` (precalculate de
-scripts/build_reservoir_dem.py si scripts/build_reservoir_levels.py).
-"""
+# Hydrological model estimating reservoir fill from accumulated precipitation
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-MM_TO_M = 1.0e-3  # 1 mm precipitatie = 1 L/m^2 = 0.001 m adancime
+MM_TO_M = 1.0e-3  # 1 mm precipitation = 1 L/m^2 = 0.001 m depth
 
 
 @dataclass
@@ -24,48 +11,43 @@ class ReservoirFillResult:
     inflow_m3: float
     inflow_source: str            # "catchment" | "direct_rain"
     catchment_km2: float | None
-    outflow_m3: float             # evacuare la baraj pe durata evenimentului
-    evap_m3: float                # evaporare de suprafata pe durata evenimentului
+    outflow_m3: float             # dam release during event
+    evap_m3: float                # surface evaporation during event
     start_volume_m3: float
-    start_fill_pct: float         # volum_start / volum_NNR * 100
+    start_fill_pct: float         # start_volume / NNR_volume * 100
     new_volume_m3: float
-    new_fill_pct: float           # (start + intrare - iesiri) / volum_NNR * 100
-    contribution_pct: float       # inflow / volum_NNR * 100 (marimea evenimentului)
-    level_before_m: float | None  # cota fata de NNR (negativ = sub NNR)
+    new_fill_pct: float           # (start + inflow - outflow) / NNR_volume * 100
+    contribution_pct: float       # inflow / NNR_volume * 100 (event magnitude)
+    level_before_m: float | None  # elevation relative to NNR (negative = below NNR)
     level_after_m: float | None
     delta_level_m: float | None
-    overtops: bool                # depaseste coronamentul
+    overtops: bool                # exceeds crest
     level_source: str             # "swot" | "assumed_nnr"
     level_as_of: str | None
     curve_source: str | None      # "dem" | "parametric"
 
 
 class ReservoirFillEstimator:
-    """Adauga scurgerea de bazin peste volumul curent si o citeste pe curba stage-storage."""
+    # Estimates reservoir fill from accumulated precipitation
 
     @staticmethod
     def estimate(map_mm: float, reservoir: dict | None, runoff_coeff: float,
                  duration_hours: float | None = None, frame_time=None,
                  evap_mm_day: float | None = None, outflow_m3s: float | None = None) -> ReservoirFillResult | None:
-        """Bilant hidrologic al lacului: V_{t+1} = V_t + intrare - evacuare - evaporare, apoi citit
-        pe curba stage-storage. None cand nu e selectat un lac / lipseste capacitatea (mod oras/cerc).
-
-        Evacuarea si evaporarea se aplica doar cand se cunoaste `duration_hours` (durata evenimentului);
-        cu rate 0 (implicit) bilantul se reduce la V_t + intrare.
-        """
+        # Hydrological balance: V_{t+1} = V_t + inflow - outflow - evaporation
         if not reservoir:
             return None
         v_nnr = reservoir.get("max_volume_m3") or 0.0
         if v_nnr <= 0.0:
             return None
 
-        # volum de pornire: nivelul curent real (SWOT/Sentinel-2), altfel NNR
+        # Start volume: current real level, else NNR
         start_v = reservoir.get("current_volume_m3")
         level_source = reservoir.get("level_source", "assumed_nnr")
         if start_v is None:
             start_v = v_nnr
 
-        # intrare: debit de bazin (sau ploaie directa pe lac)
+        # Inflow: catchment runoff or direct rain on lake
         depth_m = max(float(map_mm or 0.0), 0.0) * MM_TO_M
         catch_km2 = reservoir.get("catchment_km2")
         if catch_km2 and catch_km2 > 0.0:
@@ -75,7 +57,7 @@ class ReservoirFillEstimator:
             inflow = depth_m * (reservoir.get("surface_area_m2") or 0.0)
             inflow_source = "direct_rain"
 
-        # iesiri: evacuare la baraj + evaporare de suprafata, pe durata evenimentului
+        # Outflow: dam release + surface evaporation during event
         outflow_m3 = evap_m3 = 0.0
         if duration_hours and duration_hours > 0.0:
             # Dynamic base outflow: 5 L/s/km2 if catchment known, else 10 m3/s default.
@@ -97,6 +79,7 @@ class ReservoirFillEstimator:
 
         new_v = max(start_v + inflow - outflow_m3 - evap_m3, 0.0)
 
+        # Calculate levels and overtops using stage-storage curve
         curve = reservoir.get("stage_storage")
         level_before = level_after = delta_level = curve_source = None
         overtops = False
@@ -107,6 +90,7 @@ class ReservoirFillEstimator:
             overtops = new_v > v_nnr + curve.capacity_to_crest_m3
             curve_source = curve.source
 
+        # Return calculation results
         return ReservoirFillResult(
             inflow_m3=inflow, inflow_source=inflow_source, catchment_km2=catch_km2,
             outflow_m3=outflow_m3, evap_m3=evap_m3,

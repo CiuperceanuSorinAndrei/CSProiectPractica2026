@@ -1,4 +1,4 @@
-from src.dashboard.dashboard_callbacks import DashboardCallbacks
+from src.dashboard.callbacks_render import RenderCallbacks
 from src.dashboard.frame_store import FrameStore
 from src.dashboard.session_manager import SessionManager
 
@@ -68,10 +68,10 @@ def test_prediction_area_is_auto_roi_not_map_zoom(monkeypatch):
         FakeReservoirLoader,
     )
 
-    city_center, city_polygon, city_catchment, city_prediction_area = DashboardCallbacks._resolve_roi(
-        "predefined", "Manual (Introducere coordonate)", None, 44.0, 26.0, 30.0
+    city_center, city_polygon, city_prediction_area = RenderCallbacks._resolve_roi(
+        "predefined", "Manual (Enter coordinates)", None, 44.0, 26.0, 30.0
     )
-    reservoir_center, reservoir_polygon, reservoir_catchment, reservoir_prediction_area = DashboardCallbacks._resolve_roi(
+    reservoir_center, reservoir_polygon, reservoir_prediction_area = RenderCallbacks._resolve_roi(
         "reservoir", None, "Lake", None, None, 30.0
     )
 

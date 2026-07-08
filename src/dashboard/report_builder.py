@@ -1,17 +1,17 @@
-"""Builder for metrics and HTML reports in the Dashboard."""
+# Builder for metrics and HTML reports in the Dashboard.
 from dash import html
 import dash_bootstrap_components as dbc
 from src.core.constants import HORIZON_NAMES
 from src.dashboard.session_manager import SessionManager
 from src.geo.reservoir_fill import ReservoirFillEstimator
-from src.config import RUNOFF_COEFFICIENT, EVAP_MM_PER_DAY, RESERVOIR_OUTFLOW_M3S
+from src.config import RUNOFF_COEFFICIENT
 
 
 class ReportBuilder:
 
     @staticmethod
     def _avg_metric(hist, key: str, horizon: str) -> float:
-        """Average of strictly positive values for a metric (csi/far/pod/fss) at a given horizon."""
+        # Average of strictly positive values for a metric at a given horizon.
         vals = [m.get(horizon, 0) for m in hist.metrics_history[key] if m.get(horizon, 0) > 0]
         return sum(vals) / len(vals) if vals else 0.0
 
@@ -197,21 +197,6 @@ class ReportBuilder:
             ),
         ])
 
-    @staticmethod
-    def _build_kinematic_rows(hist) -> list:
-        """Table rows with average CSI/FAR/POD/FSS across horizons."""
-        rows = []
-        for horizon in HORIZON_NAMES:
-            c = ReportBuilder._avg_metric(hist, "csi", horizon)
-            f = ReportBuilder._avg_metric(hist, "far", horizon)
-            p = ReportBuilder._avg_metric(hist, "pod", horizon)
-            fs = ReportBuilder._avg_metric(hist, "fss", horizon)
-
-            rows.append(html.Tr([
-                html.Td(horizon), html.Td(f"{c:.2f}"), html.Td(f"{f:.2f}"),
-                html.Td(f"{p:.2f}"), html.Td(f"{fs:.2f}")
-            ]))
-        return rows
 
     @staticmethod
     def _build_volume_rows(hist) -> list:

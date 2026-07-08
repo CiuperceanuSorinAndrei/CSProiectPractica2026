@@ -2,8 +2,7 @@ from src.core.constants import HORIZON_NAMES, HORIZON_STEPS
 
 
 class FrameHistory:
-    """Accumulates total volume and global metric series (historic mode)."""
-
+    # Accumulate total volume and metric series.
     def __init__(self):
         self.reset()
 
@@ -58,7 +57,6 @@ class FrameHistory:
                 self.pred_volumes[horizon].append(0.0)
                 
         # Calculate Catchment Event Reliability on the fly using Cumulative Windows
-        # IMPORTANT: The values must be IDENTICAL to the target_step from frame_processor.py horizons
         for horizon, steps in HORIZON_STEPS.items():
             if len(self.true_volumes) > steps:
                 # Cumulative reality (e.g., sum of rain from the last 1h)

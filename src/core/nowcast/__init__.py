@@ -1,1 +1,1 @@
-"""Nowcasting: extrapolare prin advectie semi-Lagrangiana + energetica Reaction-Diffusion."""
+# Nowcasting: Semi-Lagrangian advection + Reaction-Diffusion.

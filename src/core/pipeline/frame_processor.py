@@ -12,7 +12,7 @@ from src.config import RAIN_THRESHOLD_MIN
 
 @dataclass
 class FrameResult:
-    """Rezultatul procesarii unui cadru complet."""
+    # Full frame processing result.
     tracked_cells: list[dict[str, Any]]
     rain_rate: np.ndarray
     rain_rate_masked: np.ma.MaskedArray
@@ -29,7 +29,7 @@ class FrameResult:
     raw_tracked_cells: list[Any] = None
 
 class FrameProcessor:
-    """Serviciu de domeniu stateless. Primeste input-uri decodate si intoarce FrameResult."""
+    # Stateless domain service.
     
     @staticmethod
     def process(
@@ -46,29 +46,27 @@ class FrameProcessor:
         cells_for_tracking = [c.clone() for c in prep.filtered_cells]
         tracked_cells = tracker.track(cells_for_tracking, rain_rate)
 
-        # Dynamic Horizons based on actual frame delay
+        # Dynamic horizons.
         import datetime, math
         if run_mode == "live" and frame_time is not None:
             now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
-            # Prevent negative delay if clock is slightly off
+            # Prevent negative delay.
             delay_minutes = max(0.0, (now - frame_time).total_seconds() / 60.0)
             
-            # Predict further ahead to compensate for delay. 
-            # E.g., if delay is 25m, we are already 25m behind.
-            # To predict 15m into the future (from NOW), we need 25+15 = 40m from the FRAME.
+            # Shift prediction steps to compensate for frame latency.
             epsilon = 1e-6
             step_15m = int(math.ceil(((delay_minutes + 15) / 15.0) - epsilon))
             step_1h  = int(math.ceil(((delay_minutes + 60) / 15.0) - epsilon))
             step_2h  = int(math.ceil(((delay_minutes + 120) / 15.0) - epsilon))
             
-            # Ensure steps are monotonic and > 0
+            # Ensure monotonic steps.
             step_15m = max(1, step_15m)
             step_1h = max(step_15m + 1, step_1h)
             step_2h = max(step_1h + 1, step_2h)
             
             horizons = [(step_15m, "15m"), (step_1h, "1h"), (step_2h, "2h")]
         else:
-            # Historic mode: static steps (assuming fixed 15m delay calibration)
+            # Historic mode static steps.
             horizons = list(DEFAULT_HORIZONS)
 
         float_preds = advection_engine.extrapolate(
@@ -80,7 +78,7 @@ class FrameProcessor:
             getattr(geom, 'roi_mask_fractional', None)
         )
         
-        # Apply recent error feedback loop
+        # Update feedback loop.
         advection_engine.update_feedback(
             actual_map=roi_map_mm,
             preds={}
@@ -88,13 +86,16 @@ class FrameProcessor:
         predicted_volumes = advection_engine.correct_cumulative_volumes(predicted_volumes)
         advection_engine.record_current_forecast(predicted_volumes)
 
-        valid_errors = [c.prediction_error_pixels for c in tracked_cells if c.is_tracked]
-        size_errors = [c.size_error_percent for c in tracked_cells if c.is_tracked]
+        valid_errors = []
+        size_errors = []
+        tracked_cells_dicts = []
+        for c in tracked_cells:
+            tracked_cells_dicts.append(c.as_dict())
+            if c.is_tracked:
+                valid_errors.append(c.prediction_error_pixels)
+                size_errors.append(c.size_error_percent)
 
         rain_rate_masked = np.ma.masked_where(rain_rate < RAIN_THRESHOLD_MIN, rain_rate)
-        
-        # Convert domain objects to serializable dictionaries for the UI
-        tracked_cells_dicts = [c.as_dict() for c in tracked_cells]
         
         roi_mask = getattr(geom, 'roi_mask_fractional', None)
         if roi_mask is not None:

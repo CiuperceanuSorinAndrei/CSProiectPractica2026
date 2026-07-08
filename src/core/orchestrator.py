@@ -1,4 +1,4 @@
-"""Facade for the tracking and frame processing systems. Ensures thread safety."""
+# Facade for tracking and frame processing systems. Thread safe.
 from __future__ import annotations
 import threading
 from typing import Optional, Any
@@ -11,11 +11,11 @@ from src.core.nowcast.kinematic_advector import KinematicAdvector
 from src.config import MAX_TRACKING_DISTANCE_PX
 
 class ServerBusy(Exception):
-    """Raised when a frame is already being processed."""
+    # Raised when a frame is already being processed.
     pass
 
 class Orchestrator:
-    """Facade for tracking and frame processing services."""
+    # Facade for tracking and frame processing services.
 
     def __init__(self) -> None:
         self._tracker = StormTracker(max_dist_pixels=MAX_TRACKING_DISTANCE_PX)
@@ -26,7 +26,7 @@ class Orchestrator:
         )
 
     def reset_tracking(self) -> None:
-        """Clears the tracking state."""
+        # Clears the tracking state.
         with self._lock:
             self._tracker.reset()
             self._advection_engine.reset_feedback()

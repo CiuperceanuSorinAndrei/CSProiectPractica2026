@@ -10,15 +10,12 @@ class ReservoirLoader:
     _cache = None
     _lock = threading.Lock()
     _DEM_AUGMENT_PATH = "data/geo/reservoirs/dem_augment.json"
-    _LEVELS_PATH = "data/geo/reservoirs/reservoir_levels.json"          # SWOT (lac + rau)
-    _LEVELS_S2_PATH = "data/geo/reservoirs/reservoir_levels_s2.json"    # Sentinel-2 (optic)
+    _LEVELS_PATH = "data/geo/reservoirs/reservoir_levels.json"          # SWOT (lake + river)
+    _LEVELS_S2_PATH = "data/geo/reservoirs/reservoir_levels_s2.json"    # Sentinel-2 (optical)
 
     @staticmethod
     def get_all_reservoirs(shapefile_path="data/geo/reservoirs/LacuriAcumulare.shp") -> dict:
-        """Parseaza shapefile-ul cu lacurile de acumulare si extrage geometriile.
-        
-        Returneaza un dictionar { "Nume Lac": { "polygon": shapely.Geometry, "center": (lat, lon), "radius_km": float, "bounds": (min_lon, min_lat, max_lon, max_lat) } }
-        """
+        # Parses the shapefile and extracts geometries, returning dictionary of lakes
         if ReservoirLoader._cache is not None:
             return ReservoirLoader._cache
             
@@ -35,7 +32,7 @@ class ReservoirLoader:
             records = sf.records()
             shapes = sf.shapes()
             
-            # Proiectia shapefile-ului este Stereo 70 (EPSG:31700), noi vrem Lat/Lon (EPSG:4326)
+            # Project from Stereo 70 (EPSG:31700) to Lat/Lon (EPSG:4326)
             proj_transformer = Transformer.from_crs("EPSG:31700", "EPSG:4326", always_xy=True)
 
             for rec, shp in zip(records, shapes):
@@ -48,17 +45,13 @@ class ReservoirLoader:
             ReservoirLoader._augment_with_dem(reservoirs)
             ReservoirLoader._cache = reservoirs
         except Exception as e:
-            print(f"Eroare la incarcarea lacurilor de acumulare: {e}")
+            print(f"Error loading reservoirs: {e}")
 
         return ReservoirLoader._cache if ReservoirLoader._cache else {}
 
     @staticmethod
     def get_covered_reservoirs(shapefile_path="data/geo/reservoirs/LacuriAcumulare.shp") -> dict:
-        """The set used by the application: only reservoirs with current level from SWOT (project scope).
-
-        Falls back to the complete set if RESERVOIRS_SWOT_COVERED_ONLY is False or if no SWOT data
-        exists (so the app doesn't run out of reservoirs before running build_reservoir_levels.py).
-        """
+        # Returns subset of reservoirs covered by SWOT (or all if fallback)
         from src.config import RESERVOIRS_SWOT_COVERED_ONLY
         all_res = ReservoirLoader.get_all_reservoirs(shapefile_path)
         if not RESERVOIRS_SWOT_COVERED_ONLY:
@@ -75,24 +68,17 @@ class ReservoirLoader:
             with open(path, encoding="utf-8") as fh:
                 return json.load(fh)
         except Exception as e:
-            print(f"Nu s-a putut citi {path}: {e}")
+            print(f"Could not read {path}: {e}")
             return {}
 
     @staticmethod
     def _augment_with_dem(reservoirs: dict) -> None:
-        """Attaches stage-storage curve, catchment area, and current level to each reservoir.
-
-        Curve + catchment come from dem_augment.json (precomputed from DEM) where available,
-        otherwise a parametric curve from attributes. The curve is then extended below NNR
-        (submerged part) so simulation can start from a current level. Current level comes from
-        reservoir_levels.json (SWOT); without it, simulation starts implicitly from NNR.
-        The application works with partial data.
-        """
+        # Attaches stage-storage curve, catchment area, and current level to reservoirs
         from src.geo.stage_storage import StageStorageCurve
 
         aug = ReservoirLoader._load_json(ReservoirLoader._DEM_AUGMENT_PATH)
-        # Nivele curente: SWOT (primar) + Sentinel-2 (umple golurile pentru lacurile montane);
-        # SWOT are prioritate acolo unde exista ambele.
+        # Current levels: SWOT (primary) + Sentinel-2 (gap fill for mountain lakes)
+        # SWOT takes priority where both exist
         levels = {**ReservoirLoader._load_json(ReservoirLoader._LEVELS_S2_PATH),
                   **ReservoirLoader._load_json(ReservoirLoader._LEVELS_PATH)}
 
@@ -119,14 +105,12 @@ class ReservoirLoader:
 
     @staticmethod
     def _attach_current_level(r: dict, curve, lvl: dict | None) -> None:
-        """Sets the starting volume from the SWOT level (water surface -> volume on curve),
-        or None (estimator starts from NNR) if the reservoir has no SWOT observation."""
+        # Sets starting volume from SWOT level or None if no observation
         v_nnr = r.get("max_volume_m3") or 0.0
         if lvl and lvl.get("wse_m") is not None and v_nnr > 0:
             wse = float(lvl["wse_m"])
-            # Volumul curent se plafoneaza la NNR: starea de exploatare e cel mult "plin" (100%).
-            # Sub luciul apei curba (submersa) da fractiunea reala; peste NNR (banda de atenuare,
-            # volum urias pentru lacuri de campie) nu e o stare de pornire plauzibila din SWOT.
+            # Cap volume at NNR: max operation state is "full" (100%).
+            # Submerged curve gives true fraction; above NNR is not a plausible starting state from SWOT.
             v0 = min(max(curve.volume_for_wse(wse), 0.0), v_nnr)
             r["current_volume_m3"] = v0
             r["current_fill_frac"] = v0 / v_nnr
@@ -135,7 +119,7 @@ class ReservoirLoader:
             r["level_product"] = lvl.get("product")     # "lake" | "river"
             r["level_as_of"] = lvl.get("as_of")
         else:
-            r["current_volume_m3"] = None      # -> estimatorul porneste de la NNR
+            r["current_volume_m3"] = None      # -> estimator starts from NNR
             r["current_fill_frac"] = None
             r["current_wse_m"] = None
             r["level_source"] = "assumed_nnr"
@@ -143,18 +127,14 @@ class ReservoirLoader:
 
     @staticmethod
     def _build_reservoir_entry(rec, shp, transformer, existing: dict):
-        """Builds an entry (name, data) from a record+shape; None if name is missing or empty.
-
-        Reprojects geometry from Stereo 70 (EPSG:31700) to WGS84 and disambiguates
-        duplicate names by consulting `existing` (already-added reservoirs).
-        """
+        # Builds a reservoir entry from record and shape, handling reprojection and duplicates
         denumire = rec.denumire
         if not denumire or str(denumire).strip() == "":
             return None
 
         name = str(denumire).strip().title()
 
-        # Evitam duplicatele (daca sunt mai multe poligoane cu acelasi nume)
+        # Avoid duplicates (if multiple polygons have the same name)
         original_name = name
         idx = 2
         while name in existing:
@@ -165,26 +145,22 @@ class ReservoirLoader:
         if geom_stereo.is_empty:
             return None
 
-        # Suprafata luciului de apa: aria poligonului in CRS-ul nativ al shapefile-ului
-        # (Stereo 70, unitate metrul), deci direct in m^2. Coincide cu campul `suprafata_`
-        # (in km^2) inmultit cu 1e6, dar geometria e mereu disponibila si consistenta cu
-        # masca poligonala folosita la calculul MAP.
+        # Water surface area: polygon area in native CRS (Stereo 70, meters) -> m^2
         surface_area_m2 = float(geom_stereo.area)
 
-        # Volumul maxim (la Nivelul Normal de Retentie), stocat in shapefile in milioane m^3.
+        # Max volume (at Normal Retention Level), stored in shapefile in million m^3
         vol_mil_m3 = ReservoirLoader._safe_float(rec, "vol_mil_m3")
         max_volume_m3 = vol_mil_m3 * 1.0e6 if vol_mil_m3 else 0.0
 
-        # Cota luciului de apa din atribut (poate fi 0/negativa/eronata); folosita doar ca
-        # rezerva pentru waterline cand DEM-ul nu e disponibil - cota DEM e preferata.
+        # Water surface elevation from attribute; used only as fallback when DEM is missing
         waterline_attr_m = ReservoirLoader._safe_float(rec, "elevatie")
 
-        # Transformam poligonul din metri (Stereo 70) in grade (WGS84)
+        # Transform polygon from meters (Stereo 70) to degrees (WGS84)
         geom = transform(transformer.transform, geom_stereo)
 
         bounds = geom.bounds  # (min_lon, min_lat, max_lon, max_lat)
 
-        # Calculam o raza acoperitoare aproximativa (latimea/inaltimea in km)
+        # Calculate approximate bounding radius (width/height in km)
         delta_lon = bounds[2] - bounds[0]
         delta_lat = bounds[3] - bounds[1]
         radius_km = max(delta_lon * 80.0, delta_lat * 111.0) / 2.0 + 5.0  # +5km padding
@@ -204,7 +180,7 @@ class ReservoirLoader:
 
     @staticmethod
     def _safe_float(rec, field: str) -> float:
-        """Citeste un camp numeric dintr-un record pyshp, tolerand valori lipsa/nevalide (-> 0.0)."""
+        # Reads a numeric field from a shapefile record safely
         try:
             value = rec[field]
         except (KeyError, IndexError, TypeError):

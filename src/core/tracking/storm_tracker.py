@@ -1,4 +1,4 @@
-"""Kinematic module: centroid tracking using 8D Kalman filter and KD-Tree Matcher."""
+# Kinematic tracking.
 from __future__ import annotations
 
 import uuid
@@ -71,7 +71,7 @@ class StormTracker:
         return tracked_cells
 
     def _prepare_current_cells(self, current_cells: list[StormCell], rain_matrix: np.ndarray) -> None:
-        """Calculates volume, mean intensity, energy (E) and mask for each current cell."""
+        # Calculate volume and energy.
         for c_cell in current_cells:
             c_area = c_cell.area_pixels if c_cell.area_pixels else 1.0
 
@@ -90,7 +90,7 @@ class StormTracker:
 
 
     def _apply_matched_cell(self, c_cell: StormCell, tracked_cell: StormCell, best_match: StormCell) -> str:
-        """Existing association: inherit parent ID, update Kalman and transfer history."""
+        # Inherit and update.
         c_area = tracked_cell.area_pixels
         c_volume = tracked_cell.volume
 
@@ -114,7 +114,7 @@ class StormTracker:
         return cell_id
 
     def _apply_new_or_split_cell(self, c_cell: StormCell, tracked_cell: StormCell) -> str:
-        """New or SPLIT cell: generate ID, inherit parent's velocity and initialize Kalman."""
+        # Create or split cell.
         c_area = tracked_cell.area_pixels
 
         cell_id = str(uuid.uuid4())[:8]
@@ -139,7 +139,7 @@ class StormTracker:
         return cell_id
 
     def _inherit_parent_velocity(self, c_cell: StormCell) -> tuple[float, float]:
-        """Pass 2: closest tracked parent donates initial velocity (SPLIT detection from orphans)."""
+        # Inherit velocity from parent.
         best_parent_dist = 1000.0
         inherited_vx, inherited_vy = 0.0, 0.0
 
@@ -154,7 +154,7 @@ class StormTracker:
             dist = np.sqrt((c_cell.centroid_x - px) ** 2 + (c_cell.centroid_y - py) ** 2)
 
             # Mahalanobis 3-Sigma limit with physical upper bound
-            actual_limit = np.clip(np.sqrt(max(kf_parent.positional_uncertainty, 1.0)) * 3.0, 10.0, 30.0)
+            actual_limit = np.clip(np.sqrt(max(kf_parent.positional_uncertainty, 1.0)) * 3.0, 10.0, 60.0)
 
             if dist <= actual_limit and dist < best_parent_dist:
                 best_parent_dist = dist
@@ -164,7 +164,7 @@ class StormTracker:
         return inherited_vx, inherited_vy
 
     def _predict_cell_mask(self, c_cell: StormCell, tracked_cell: StormCell) -> None:
-        """Predicts future morphological mask using only Kalman velocity."""
+        # Predict future mask.
         shift_x = tracked_cell.v_x
         shift_y = tracked_cell.v_y
 
@@ -174,11 +174,7 @@ class StormTracker:
 
     @staticmethod
     def _finalize_cell_trend(tracked_cell: StormCell) -> None:
-        """Calculates area trend, lifecycle phase (Phase 4) and predicted size error.
-        
-        IMPORTANT: volume_trend (calculated from actual volume ratio) is NOT overwritten.
-        area_trend (calculated from pixel area history) is only used for predicted_area_pixels.
-        """
+        # Calculate trend and phase.
         c_area = tracked_cell.area_pixels
 
         # Area trend - used ONLY for morphological prediction (cell size)

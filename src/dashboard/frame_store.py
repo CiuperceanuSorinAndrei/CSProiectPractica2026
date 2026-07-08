@@ -5,7 +5,7 @@ from datetime import datetime as dt
 
 
 class FrameStore:
-    """Listing, filtering by interval, and labeling of local frames, based on name pattern."""
+    # Frame storage and filtering based on filename timestamp.
 
     def __init__(self, data_dir: str, file_format: str):
         self._dir = data_dir
@@ -25,7 +25,7 @@ class FrameStore:
         return sorted(f for f in os.listdir(self._dir) if self._file_datetime(f) is not None)
 
     def filtered(self, time_range: dict | None, run_mode: str = "historic") -> list[str]:
-        """Frames within the interval; in LIVE mode returns only frames from the current day."""
+        # Filter files by interval; LIVE mode returns today's frames.
         files = self.list()
         if run_mode == "live":
             today = dt.utcnow().date()
@@ -52,10 +52,10 @@ class FrameStore:
             return None
 
     def datetime(self, filename: str):
-        """Frame timestamp parsed from the configured filename pattern."""
+        # Frame timestamp parsed from filename.
         return self._file_datetime(filename)
 
     def label(self, filename: str) -> str:
-        """Human label 'YYYY-MM-DD HH:MM' derived from the filename."""
+        # Human readable time label.
         d = self.datetime(filename)
         return d.strftime("%Y-%m-%d %H:%M") if d is not None else filename

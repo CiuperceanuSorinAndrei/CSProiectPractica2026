@@ -8,56 +8,14 @@ from shapely.geometry import shape
 class PolygonIntersection:
 
     @staticmethod
-    def mask_fraction_inside(
-        mask: np.ndarray,
-        lon_grid: np.ndarray,
-        lat_grid: np.ndarray,
-        polygon_geojson: dict,
-    ) -> float:
-        """Fraction of mask pixels inside the GeoJSON polygon.
-
-        Uses Shapely prepared geometry to accelerate 'contains' tests
-        for multiple queries.
-        """
-        polygon = shape(polygon_geojson)
-        if mask.shape != lon_grid.shape or mask.shape != lat_grid.shape:
-            return 0.0
-
-        points = np.argwhere(mask > 0)
-        if len(points) == 0:
-            return 0.0
-
-        # Vectorized shapely 2.0 implementation avoiding native Python for-loops
-        lons = lon_grid[points[:, 0], points[:, 1]]
-        lats = lat_grid[points[:, 0], points[:, 1]]
-        
-        point_geoms = shapely.points(lons, lats)
-        hits = np.sum(shapely.contains(polygon, point_geoms))
-        
-        return float(hits) / len(points)
-
-    @staticmethod
-    def create_polygon_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
-        """Creates a boolean mask (same shape as grid) for the interior of a polygon."""
-        if polygon is None or lon_grid.shape != lat_grid.shape:
-            return np.zeros_like(lon_grid, dtype=bool)
-            
-        # Flatten grid for shapely.points
-        flat_lons = lon_grid.ravel()
-        flat_lats = lat_grid.ravel()
-        
-        point_geoms = shapely.points(flat_lons, flat_lats)
-        mask_flat = shapely.contains(polygon, point_geoms)
-        
-        return mask_flat.reshape(lon_grid.shape)
-
-    @staticmethod
     def create_fractional_mask(polygon, lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
-        """Creates a fractional mask [0.0, 1.0] based on exact polygon coverage per pixel."""
+        # Create fractional mask [0.0, 1.0] based on exact polygon coverage
+        # Validate inputs and initialize fractional mask
         mask_frac = np.zeros_like(lon_grid, dtype=np.float32)
         if polygon is None or lon_grid.shape != lat_grid.shape:
             return mask_frac
             
+        # Define bounding box filter to optimize calculations
         min_lon, min_lat, max_lon, max_lat = polygon.bounds
         buffer = 0.05
         
@@ -69,6 +27,7 @@ class PolygonIntersection:
         if len(y_idx) == 0:
             return mask_frac
             
+        # Compute local grid gradients and point geometries
         from shapely.geometry import Polygon
         
         lat_diff_y = np.gradient(lat_grid, axis=0)
@@ -89,6 +48,7 @@ class PolygonIntersection:
         exterior = polygon.exterior
         near_boundary_mask = shapely.dwithin(point_geoms, exterior, pixel_radius * 1.5)
         
+        # Calculate fractional coverage for boundary pixels
         for idx, (i, j) in enumerate(zip(y_idx, x_idx)):
             if inside_mask[idx] and not near_boundary_mask[idx]:
                 mask_frac[i, j] = 1.0

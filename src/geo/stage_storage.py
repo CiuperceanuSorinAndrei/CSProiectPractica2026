@@ -1,12 +1,4 @@
-"""Stage-storage curve (level -> volume) for a reservoir.
-
-Submerged volume (up to NNR) is anchored from an attribute (`vol_mil_m3`); the DEM cannot see underwater.
-Above the waterline, we integrate the real terrain from the DEM to obtain the capacity in the
-flood attenuation band (NNR -> crest) - exactly the volume the shapefile leaves 0 (`vol_atenua`).
-
-Curve levels are *relative* to the waterline: `dh=0` means NNR (volume = v_nnr).
-When DEM is missing (lake under one pixel, tile missing), it falls back to a parametric prismatic model.
-"""
+# Stage-storage curve (level -> volume) for a reservoir using DEM integration above waterline.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,28 +16,26 @@ class StageStorageCurve:
 
     # ---- runtime queries -------------------------------------------------
     def volume_at_level(self, dh: float) -> float:
-        """Total volume (m^3) at `dh` meters above NNR (interpolated, clamped at edges)."""
+        # Total volume (m^3) at `dh` meters above NNR
         return float(np.interp(dh, self.levels_m, self.volumes_m3))
 
     def level_for_added_volume(self, added_m3: float) -> float:
-        """Level rise (m above NNR) produced by an `added_m3` volume added above NNR."""
+        # Level rise (m above NNR) from added volume
         if added_m3 <= 0.0:
             return 0.0
         rel = self.volumes_m3 - self.v_nnr_m3            # volume above NNR, increasing from 0
         return float(np.interp(added_m3, rel, self.levels_m))
 
     def level_for_volume(self, volume_m3: float) -> float:
-        """Elevation (m relative to NNR; negative = below NNR) for a given total volume."""
+        # Elevation relative to NNR for a given total volume
         return float(np.interp(volume_m3, self.volumes_m3, self.levels_m))
 
     def volume_for_wse(self, wse_m: float) -> float:
-        """Total volume (m^3) for an absolute waterline elevation (m, same geoid as DEM)."""
+        # Total volume for absolute waterline elevation
         return self.volume_at_level(wse_m - self.waterline_m)
 
     def with_submerged_branch(self, surface_area_m2: float, step_m: float = 0.5) -> "StageStorageCurve":
-        """Extends the curve below NNR (submerged part, invisible from DEM) using a conic model:
-        area decreases linearly from `surface_area_m2` (at NNR) to 0 at the bottom, so V grows quadratically.
-        Required to start simulation from a current level below NNR. Idempotent."""
+        # Extend curve below NNR using conic model for submerged volume
         if self.levels_m[0] < 0 or surface_area_m2 <= 0 or self.v_nnr_m3 <= 0:
             return self
         depth = 2.0 * self.v_nnr_m3 / surface_area_m2     # depth NNR->bottom (cone: V=A*D/2)
@@ -60,7 +50,7 @@ class StageStorageCurve:
 
     @property
     def capacity_to_crest_m3(self) -> float:
-        """Volume from NNR to the highest modeled level (approximate crest)."""
+        # Volume from NNR to highest modeled level
         return float(self.volumes_m3[-1] - self.v_nnr_m3)
 
     def overtops(self, added_m3: float) -> bool:
@@ -90,8 +80,7 @@ class StageStorageCurve:
     @classmethod
     def from_dem(cls, window, polygon, v_nnr_m3: float,
                  max_rise_m: float = 25.0, step_m: float = 0.5) -> "StageStorageCurve | None":
-        """Integrates DEM terrain above the waterline to obtain V(dh). Returns None if the lake has
-        too few pixels (under ~3), in which case the caller falls back to the parametric model."""
+        # Integrate DEM terrain above waterline to obtain V(dh)
         from scipy import ndimage
 
         dem = window.dem
@@ -123,8 +112,7 @@ class StageStorageCurve:
     @classmethod
     def from_attributes(cls, v_nnr_m3: float, surface_area_m2: float, waterline_m: float,
                         max_rise_m: float = 10.0, step_m: float = 0.5) -> "StageStorageCurve":
-        """Parametric prismatic fallback: above NNR area remains ~constant (V grows linearly).
-        Used when DEM is unavailable (tiny lakes, missing tiles)."""
+        # Parametric fallback using prismatic model when DEM is unavailable
         levels = np.arange(0.0, max_rise_m + step_m, step_m)
         area = max(surface_area_m2, 1.0)
         volumes = v_nnr_m3 + area * levels

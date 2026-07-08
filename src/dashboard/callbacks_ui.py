@@ -1,4 +1,4 @@
-"""UI toggle callbacks for the NowcastingDashboard."""
+# UI toggle callbacks for the NowcastingDashboard.
 from dash import Input, Output, State
 from dash.exceptions import PreventUpdate
 import dash
@@ -8,7 +8,7 @@ from src.dashboard.constants import MANUAL_LOCATION
 
 
 class UICallbacks:
-    """Registers pure UI state toggles (no data processing)."""
+    """Registers pure UI state toggles"""
 
     def __init__(self, dashboard):
         self.dashboard = dashboard

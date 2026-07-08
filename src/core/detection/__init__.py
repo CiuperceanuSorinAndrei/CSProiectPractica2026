@@ -1,1 +1,1 @@
-"""Detectie celule de furtuna intr-un singur cadru (connected-component labeling)."""
+# Single frame storm cell detection (connected-component labeling).

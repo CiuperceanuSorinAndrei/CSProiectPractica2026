@@ -11,7 +11,7 @@ from src.core.tracking.storm_filter import StormFilter
 
 
 class Matcher:
-    """Associates current cells with previous cells, optimized via KD-Tree."""
+    # KD-Tree bipartite matching.
 
     @staticmethod
     def _coords_iou(coords_a: np.ndarray | list | None, coords_b: np.ndarray | list | None) -> float:
@@ -21,7 +21,7 @@ class Matcher:
         arr_a = np.ascontiguousarray(coords_a)
         arr_b = np.ascontiguousarray(coords_b)
         
-        # Bounding box check for fast rejection (O(1))
+        # Bounding box check for fast rejection.
         min_a = arr_a.min(axis=0)
         max_a = arr_a.max(axis=0)
         min_b = arr_b.min(axis=0)
@@ -31,8 +31,7 @@ class Matcher:
             max_a[1] < min_b[1] or min_a[1] > max_b[1]):
             return 0.0
             
-        # ponytail: 1D hash intersection is mathematically identical to exact pixel IOU but 50x faster
-        # FIXED: Offset added to prevent negative coord collisions, and multiplier increased to 100000
+        # 1D hash intersection.
         hash_a = (arr_a[:, 0] + 10000) * 100000 + (arr_a[:, 1] + 10000)
         hash_b = (arr_b[:, 0] + 10000) * 100000 + (arr_b[:, 1] + 10000)
         intersection = len(np.intersect1d(hash_a, hash_b, assume_unique=True))
@@ -50,7 +49,7 @@ class Matcher:
         kalman_bank: dict[str, StormFilter],
         max_dist_pixels: int = 15
     ) -> dict[int, int]:
-        """Returns a dictionary mapping current index to previous index."""
+        # Return index mapping.
         if not current_cells or not previous_cells:
             return {}
 
@@ -68,8 +67,7 @@ class Matcher:
         kalman_bank: dict[str, StormFilter],
         max_dist_pixels: int,
     ) -> list[tuple[int, int, float]]:
-        """Candidate edges (i_current, j_previous, hybrid_cost) via KD-Tree pre-filtering."""
-        # Extract predicted positions from Kalman for previous cells
+        # Candidate edges via KD-Tree.
         prev_coords = []
         valid_prev_indices = []
         for j, p_cell in enumerate(previous_cells):
@@ -84,12 +82,9 @@ class Matcher:
 
         prev_coords_arr = np.array(prev_coords)
 
-        # KD-Tree pre-filtering: search neighbors on a double radius to include splits and errors
+        # KD-Tree pre-filtering search neighbors.
         tree = cKDTree(prev_coords_arr)
-
-        # Search neighbors with an absolutely safe maximum physical radius (30 pixels = ~360 km/h)
-        # Any larger movement is guaranteed to be noise or radar error
-        radius_limit = 30.0
+        radius_limit = 100.0
         
         edges = []
         for i, c_cell in enumerate(current_cells):
@@ -110,7 +105,7 @@ class Matcher:
                 if p_id in kalman_bank:
                     sigma_pos = np.sqrt(max(kalman_bank[p_id].positional_uncertainty, 1.0))
                 
-                # Mahalanobis 3-Sigma limit with a physical cap dictated by storm diameter
+                # Mahalanobis 3-Sigma limit.
                 p_area = float(p_cell.area_pixels if p_cell.area_pixels > 0 else 1.0)
                 physical_radius = np.sqrt(p_area) * 1.5
                 min_limit = max(15.0, physical_radius)
@@ -144,8 +139,7 @@ class Matcher:
 
                 hybrid_cost = dist_norm + (area_penalty * 0.5) + (volume_penalty * 0.5) + (iou_penalty * 1.5)
                 
-                # Phase 3: Trajectory Filtering (Mahalanobis Constraint)
-                # If the error (dist) is very close to the edge of the 3-Sigma tolerance, the cost explodes.
+                # Trajectory Filtering.
                 if dist > actual_limit * 0.8:
                     hybrid_cost += 500.0
                 elif hybrid_cost >= 2.5:
@@ -160,7 +154,7 @@ class Matcher:
     def _connected_components(
         edges: list[tuple[int, int, float]],
     ) -> list[tuple[list[int], list[int]]]:
-        """Groups edges into bipartite connected components (BFS) for local assignment."""
+        # Bipartite connected components.
         adj = defaultdict(list)
         for u, v, w in edges:
             adj[f"C_{u}"].append(f"P_{v}")
@@ -194,7 +188,7 @@ class Matcher:
         components: list[tuple[list[int], list[int]]],
         edges: list[tuple[int, int, float]],
     ) -> dict[int, int]:
-        """Hungarian (linear_sum_assignment) on each component -> {idx_current: idx_previous}."""
+        # Local Hungarian assignment.
         matches = {}
         edge_costs = {(u, v): w for u, v, w in edges}
 

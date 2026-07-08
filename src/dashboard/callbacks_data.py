@@ -1,4 +1,4 @@
-"""Data acquisition callbacks (FTP polling, historic downloads)."""
+# Data acquisition callbacks (FTP polling, historic downloads).
 from datetime import datetime as dt
 import dash
 from dash import Input, Output, State
@@ -66,7 +66,7 @@ class DataCallbacks:
         self.dashboard._data_service.reconfigure(s)
         self.dashboard._store.reconfigure(s.local_dir, s.file_format)
 
-    def _poll_live_data(self, n_int, mode, btn_apply, current_val, current_max,
+    def _poll_live_data(self, _n_int, mode, _btn_apply, current_val, current_max,
                         host, remote_dir, local_dir, username, password, file_format, time_delta):
         if mode != "live":
             raise PreventUpdate

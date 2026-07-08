@@ -1,4 +1,4 @@
-"""Per-user state management (Sessions) for the Dashboard."""
+# Per-user state management (Sessions) for the Dashboard.
 import time
 import uuid
 
@@ -7,7 +7,7 @@ from src.dashboard.frame_history import FrameHistory
 
 
 class SessionManager:
-    """Manages Orchestrator and FrameHistory instances per session."""
+    # Manages Orchestrator and FrameHistory instances per session.
     
     def __init__(self):
         self._orchestrators: dict[str, Orchestrator] = {}

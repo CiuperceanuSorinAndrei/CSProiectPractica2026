@@ -1,9 +1,4 @@
-"""Acces la Copernicus GLO-30 DEM fara GDAL: descarca tile-uri (.tif COG) si le imbina.
-
-Tile-urile Copernicus sunt COG-uri GeoTIFF cu predictor floating-point; le citim cu tifffile
-(are nevoie de pachetul `imagecodecs` pentru decompresie). Peste Romania (43-49 N) toate
-tile-urile de 1° au 3600x3600 pixeli (~30 m), deci mozaicul este o simpla plasare pe grila.
-"""
+# Copernicus GLO-30 DEM access: downloads and mosaics .tif COG tiles without GDAL.
 from __future__ import annotations
 
 import os
@@ -16,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import tifffile
 
-GLO30_PX = 1.0 / 3600.0            # grad/pixel (uniform in banda 0-50 N)
-_TILE = 3600                        # pixeli/latura pentru un tile de 1°
+GLO30_PX = 1.0 / 3600.0            # deg/pixel (uniform in 0-50 N band)
+_TILE = 3600                        # pixels/side for a 1 degree tile
 _BASE = "https://copernicus-dem-30m.s3.amazonaws.com"
 _M_PER_DEG = 111320.0
 
@@ -30,9 +25,8 @@ def _tile_id(south: int, west: int) -> str:
 
 @dataclass
 class DemWindow:
-    """O fereastra DEM in coordonate geografice. `lon0`/`lat0` = coltul NV (margine) al
-    pixelului [0,0]; centrul pixelului [r,c] este (lon0+(c+.5)px, lat0-(r+.5)px)."""
-    dem: np.ndarray      # float32 [row, col], randul 0 = nord
+    # Geographic DEM window. lon0/lat0 is NW corner of pixel [0,0].
+    dem: np.ndarray      # float32 [row, col], row 0 = north
     lon0: float
     lat0: float
     px: float
@@ -48,14 +42,14 @@ class DemWindow:
         return lon, lat
 
     def cell_area_m2(self) -> np.ndarray:
-        """Aria fiecarui pixel (m^2); scade cu latitudinea (dx = px*m_per_deg*cos(lat))."""
+        # Area of each pixel in m^2 (decreases with latitude)
         _, lat = self.centers_1d()
         dy = self.px * _M_PER_DEG
         dx = self.px * _M_PER_DEG * np.cos(np.radians(lat))
         return (dy * dx)[:, None] * np.ones((1, self.dem.shape[1]), dtype=np.float64)
 
     def water_mask(self, polygon) -> np.ndarray:
-        """Masca pixelilor al caror centru cade in poligonul lacului (WGS84)."""
+        # Mask of pixels whose center falls inside the lake polygon
         import shapely
         lon, lat = self.centers_1d()
         LON, LAT = np.meshgrid(lon, lat)
@@ -63,7 +57,7 @@ class DemWindow:
 
 
 class DemSource:
-    """Descarca si memoreaza tile-uri GLO-30, oferind mozaicuri pe ferestre arbitrare."""
+    # Downloads and caches GLO-30 tiles, providing mosaics for arbitrary windows
 
     def __init__(self, cache_dir: str, timeout: float = 120.0):
         self.cache_dir = cache_dir
@@ -71,11 +65,13 @@ class DemSource:
         os.makedirs(cache_dir, exist_ok=True)
 
     def _tile_path(self, south: int, west: int) -> str | None:
-        """Calea locala a tile-ului (il descarca daca lipseste). None daca nu exista pe server."""
+        # Local tile path (downloads if missing). None if not on server.
+        # Check local cache
         name = _tile_id(south, west)
         path = os.path.join(self.cache_dir, name + ".tif")
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return path
+        # Download from S3 with temporary file
         url = f"{_BASE}/{name}/{name}.tif"
         tmp = path + ".part"
         try:
@@ -87,7 +83,7 @@ class DemSource:
         except Exception:
             if os.path.exists(tmp):
                 os.remove(tmp)
-            return None  # tile inexistent (ex. peste ocean) sau eroare de retea
+            return None  # Tile missing (e.g. over ocean) or network error
 
     @functools.lru_cache(maxsize=32)
     def _read_tile(self, south: int, west: int) -> np.ndarray | None:
@@ -98,8 +94,8 @@ class DemSource:
             return tf.pages[0].asarray()
 
     def mosaic(self, lon_min: float, lon_max: float, lat_min: float, lat_max: float) -> DemWindow | None:
-        """Imbina tile-urile care acopera bbox-ul si decupeaza exact la bbox. None daca nu exista
-        niciun tile (in afara acoperirii)."""
+        # Mosaic tiles covering bbox and crop to bbox. None if outside coverage.
+        # Calculate bounding tiles
         w0, w1 = math.floor(lon_min), math.floor(lon_max)
         s0, s1 = math.floor(lat_min), math.floor(lat_max)
 
@@ -108,11 +104,12 @@ class DemSource:
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(lambda p: self._tile_path(*p), pairs))
 
+        # Initialize mosaic array
         nx_t, ny_t = (w1 - w0 + 1), (s1 - s0 + 1)
         big = np.full((ny_t * _TILE, nx_t * _TILE), np.nan, dtype=np.float32)
         got = False
-        for ti, south in enumerate(range(s1, s0 - 1, -1)):     # nord -> sud
-            for tj, west in enumerate(range(w0, w1 + 1)):       # vest -> est
+        for ti, south in enumerate(range(s1, s0 - 1, -1)):     # north -> south
+            for tj, west in enumerate(range(w0, w1 + 1)):       # west -> east
                 arr = self._read_tile(south, west)
                 if arr is not None:
                     big[ti * _TILE:(ti + 1) * _TILE, tj * _TILE:(tj + 1) * _TILE] = arr[:_TILE, :_TILE]
@@ -120,6 +117,7 @@ class DemSource:
         if not got:
             return None
 
+        # Crop mosaic to exact geographic bounds
         block_lon0 = float(w0)
         block_lat0 = float(s1 + 1)
         c0 = max(int(round((lon_min - block_lon0) / GLO30_PX)), 0)
