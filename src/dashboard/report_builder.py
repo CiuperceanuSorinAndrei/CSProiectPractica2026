@@ -26,9 +26,15 @@ class ReportBuilder:
                 res = ReservoirFillEstimator.estimate(h_val, reservoir, RUNOFF_COEFFICIENT, duration_hours=None, frame_time=frame_time)
                 if res:
                     if res.overtops:
-                        parts.append(html.Li([html.Strong(f"{h} Forecast: "), html.Span(f"+{res.contribution_pct:.2f}% ➝ ⚠ OVERFLOW", className="text-danger fw-bold")]))
+                        text = f"+{res.contribution_pct:.2f}% ➝ ⚠ OVERFLOW"
+                        if res.delta_level_m is not None:
+                            text += f" ({res.delta_level_m:+.2f} m)"
+                        parts.append(html.Li([html.Strong(f"{h} Forecast: "), html.Span(text, className="text-danger fw-bold")]))
                     else:
-                        parts.append(html.Li([html.Strong(f"{h} Forecast adds: "), f"+{res.contribution_pct:.2f}% capacity"]))
+                        text = f"+{res.contribution_pct:.2f}% capacity"
+                        if res.delta_level_m is not None:
+                            text += f" ({res.delta_level_m:+.2f} m)"
+                        parts.append(html.Li([html.Strong(f"{h} Forecast adds: "), text]))
             
             if not parts:
                 return value_str
